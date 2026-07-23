@@ -2,7 +2,9 @@ name: docker-publish
 
 on:
   push:
-    tags: ["v*"]           # publish only on version tags; CI validates builds on main/PRs
+    tags:
+      - "v*"        # app release: build+push image AND publish the chart
+      - "chart-*"   # chart-only release: publish the chart, no image build
   workflow_dispatch:
 
 env:
@@ -11,6 +13,8 @@ env:
 
 jobs:
   build-and-push:
+    # Image is built only for app releases (v* tags), not chart-only releases.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create GitHub Releases on tags
@@ -69,21 +73,32 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
 
-  release:
-    # Only on version tags: package the chart and cut a GitHub Release.
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-and-push
+  chart-release:
+    # Runs for both v* (app+chart) and chart-* (chart only). Independent of the
+    # image build — the chart is packaged from Chart.yaml (version + appVersion),
+    # so a chart-only bump publishes without rebuilding the app image.
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write   # create the GitHub Release
+      packages: write   # push the chart to GHCR (OCI)
     steps:
       - uses: actions/checkout@v7
 
       - uses: azure/setup-helm@v5
 
       - name: Package Helm chart
+        run: helm package charts/prometheus-ch-exporter --destination ./dist
+
+      - name: Log in to GHCR (Helm OCI)
         run: |
-          helm package charts/prometheus-ch-exporter --destination ./dist
+          helm registry login "${{ env.REGISTRY }}" \
+            --username "${{ github.actor }}" \
+            --password "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Push chart to GHCR (OCI)
+        run: |
+          helm push dist/*.tgz "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3

@@ -33,7 +33,12 @@ ClickHouseConnection (cluster-scoped CRD)   ClickHouseQuery (namespaced CRD)
 ## Install
 
 ```bash
-# Install the CRDs and the operator via Helm.
+# From a published release (chart hosted as an OCI artifact on GHCR):
+helm install prometheus-ch-exporter \
+  oci://ghcr.io/pixelfederation/charts/prometheus-ch-exporter --version 0.1.0 \
+  -n monitoring --create-namespace
+
+# ...or from a local checkout of this repo:
 helm install prometheus-ch-exporter ./charts/prometheus-ch-exporter \
   -n monitoring --create-namespace
 ```
