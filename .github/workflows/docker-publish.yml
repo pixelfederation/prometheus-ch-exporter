@@ -2,8 +2,7 @@ name: docker-publish
 
 on:
   push:
-    branches: [main]
-    tags: ["v*"]
+    tags: ["v*"]           # publish only on version tags; CI validates builds on main/PRs
   workflow_dispatch:
 
 env:

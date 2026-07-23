@@ -20,9 +20,18 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Docker base image in the Dockerfile
+  # Docker base image in the Dockerfile.
+  # We deliberately stay on the python:3.12-slim tag (matches requires-python,
+  # .tool-versions and CI). Ignore all tag/version bumps so a major like 3.14
+  # is never proposed; Dependabot still refreshes the pinned @sha256 digest.
   - package-ecosystem: docker
     directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
