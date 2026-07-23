@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "prometheus-ch-exporter.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "prometheus-ch-exporter.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "prometheus-ch-exporter.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "prometheus-ch-exporter.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "prometheus-ch-exporter.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: operator
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.health.port }}
+              protocol: TCP
+          env:
+            - name: PROMCH_DEFAULT_INTERVAL
+              value: {{ .Values.operator.defaultInterval | quote }}
+            - name: PROMCH_DEFAULT_TIMEOUT
+              value: {{ .Values.operator.defaultTimeout | quote }}
+            - name: PROMCH_DEFAULT_MAX_CONCURRENT
+              value: {{ .Values.operator.defaultMaxConcurrent | quote }}
+            - name: PROMCH_STATUS_INTERVAL
+              value: {{ .Values.operator.statusInterval | quote }}
+            - name: PROMCH_LAST_ERROR_TTL
+              value: {{ .Values.operator.lastErrorTtl | quote }}
+            - name: PROMCH_EXPIRE_AFTER_FAILURES
+              value: {{ .Values.operator.expireAfterFailures | quote }}
+            # Plain seconds — connection.py parses these with float().
+            - name: PROMCH_RECHECK_INTERVAL
+              value: {{ .Values.operator.recheckInterval | quote }}
+            - name: PROMCH_TOPOLOGY_INTERVAL
+              value: {{ .Values.operator.topologyInterval | quote }}
+            - name: PROMCH_METRICS_PORT
+              value: {{ .Values.metrics.port | quote }}
+            - name: PROMCH_HEALTH_PORT
+              value: {{ .Values.health.port | quote }}
+            - name: PROMCH_LOG_LEVEL
+              value: {{ .Values.operator.logLevel | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

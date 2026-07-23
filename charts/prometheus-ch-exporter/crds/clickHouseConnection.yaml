@@ -1,0 +1,109 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clickhouseconnections.prometheus-ch-exporter.io
+spec:
+  group: prometheus-ch-exporter.io
+  scope: Cluster
+  names:
+    kind: ClickHouseConnection
+    plural: clickhouseconnections
+    singular: clickhouseconnection
+    shortNames: ["chc"]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Alive
+          type: integer
+          jsonPath: .status.aliveNodes
+        - name: Total
+          type: integer
+          jsonPath: .status.totalNodes
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: ["seedHosts", "clusterName"]
+              properties:
+                seedHosts:
+                  type: array
+                  items:
+                    type: string
+                clusterName:
+                  type: string
+                port:
+                  type: integer
+                  default: 8123
+                username:
+                  type: string
+                  default: "default"
+                maxFailovers:
+                  type: integer
+                  nullable: true
+                systemQueryRetries:
+                  type: integer
+                  default: 1
+                livenessMode:
+                  type: string
+                  enum: ["active", "passive"]
+                  default: "active"
+                connectTimeout:
+                  type: number
+                  default: 10.0
+                  description: "Per-node TCP connect timeout in seconds. Lower = faster detection of a down node (and faster shutdown), at the risk of flagging a slow-connecting node."
+                recheckInterval:
+                  type: string
+                  default: "60s"
+                  description: "Reserved. Per-connection liveness re-check interval is not yet wired; the operator currently uses the PROMCH_RECHECK_INTERVAL env var (kopf timer intervals are process-wide)."
+                topologyInterval:
+                  type: string
+                  default: "30m"
+                  description: "Reserved. Per-connection topology discovery interval is not yet wired; the operator currently uses the PROMCH_TOPOLOGY_INTERVAL env var."
+                idleTtl:
+                  type: string
+                  default: "5m"
+            status:
+              type: object
+              # x-kubernetes-preserve-unknown-fields: true
+              properties:
+                phase:
+                  type: string
+                totalNodes:
+                  type: integer
+                aliveNodes:
+                  type: integer
+                lastDiscovery:
+                  type: string
+                  nullable: true
+                nodes:
+                  type: array
+                  items:
+                    type: object
+                    # status is operator-managed; allow new fields without a
+                    # schema bump so added status fields are not pruned.
+                    # x-kubernetes-preserve-unknown-fields: true
+                    properties:
+                      host:
+                        type: string
+                      alive:
+                        type: boolean
+                      inCluster:
+                        type: boolean
+                      lastChecked:
+                        type: string
+                        nullable: true
+                      lastError:
+                        type: string
+                        nullable: true

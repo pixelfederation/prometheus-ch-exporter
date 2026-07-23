@@ -1,0 +1,12 @@
+{{- range .Values.queries }}
+---
+apiVersion: prometheus-ch-exporter.io/v1alpha1
+kind: ClickHouseQuery
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "prometheus-ch-exporter.labels" $ | nindent 4 }}
+spec:
+  {{- toYaml .spec | nindent 2 }}
+{{- end }}

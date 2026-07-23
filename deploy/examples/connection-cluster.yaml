@@ -1,0 +1,11 @@
+apiVersion: prometheus-ch-exporter.io/v1alpha1
+kind: ClickHouseConnection
+metadata:
+  name: cluster
+spec:
+  # Replace with one reachable node IP from your EC2 cluster.
+  seedHosts:
+    - "REPLACE_WITH_REACHABLE_NODE_IP"
+  clusterName: my_cluster
+  port: 8123
+  username: default

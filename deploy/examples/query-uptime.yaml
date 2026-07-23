@@ -1,0 +1,16 @@
+# Data query: runs on one node (with failover) → a single time series.
+apiVersion: prometheus-ch-exporter.io/v1alpha1
+kind: ClickHouseQuery
+metadata:
+  name: uptime
+  namespace: monitoring
+spec:
+  connectionRef: cluster            # name of the (cluster-scoped) ClickHouseConnection
+  queryType: data
+  query: "SELECT uptime() AS value"
+  interval: "10s"
+  metric:
+    name: clickhouse_uptime_seconds
+    help: "ClickHouse uptime in seconds (from the node that served the query)"
+# For a per-node series, set queryType: system (each row gets a `node` label),
+# e.g. metric.name: clickhouse_node_uptime_seconds

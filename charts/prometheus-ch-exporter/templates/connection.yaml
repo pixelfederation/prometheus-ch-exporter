@@ -1,0 +1,11 @@
+{{- range .Values.connections }}
+---
+apiVersion: prometheus-ch-exporter.io/v1alpha1
+kind: ClickHouseConnection
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "prometheus-ch-exporter.labels" $ | nindent 4 }}
+spec:
+  {{- toYaml .spec | nindent 2 }}
+{{- end }}

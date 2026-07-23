@@ -1,0 +1,17 @@
+apiVersion: v2
+name: prometheus-ch-exporter
+description: Kubernetes operator that exports ClickHouse query results as Prometheus metrics
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - clickhouse
+  - prometheus
+  - operator
+  - metrics
+  - exporter
+home: https://github.com/pixelfederation/prometheus-ch-exporter
+sources:
+  - https://github.com/pixelfederation/prometheus-ch-exporter
+maintainers:
+  - name: prometheus-ch-exporter maintainers

@@ -1,0 +1,86 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clickhousequeries.prometheus-ch-exporter.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.0.0
+spec:
+  group: prometheus-ch-exporter.io
+  scope: Namespaced
+  names:
+    plural: clickhousequeries
+    singular: clickhousequery
+    kind: ClickHouseQuery
+    shortNames:
+      - chq
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Failures
+          type: integer
+          jsonPath: .status.consecutiveFailures
+        - name: Last Success
+          type: string
+          jsonPath: .status.lastSuccess.timestamp
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [query, metric, connectionRef]
+              properties:
+                query:
+                  type: string
+                  description: "ClickHouse SQL. Must contain a 'value' column (numeric). All other columns become dynamic label names. Each result row produces one Prometheus time series."
+                  minLength: 1
+                interval:
+                  type: string
+                  description: "Query execution interval. Overrides operator default. Format: 30s, 5m, 1h."
+                  pattern: '^[0-9]+(s|m|h)$'
+                timeout:
+                  type: string
+                  description: "Query timeout. Overrides operator default. Format: 10s, 1m."
+                  pattern: '^[0-9]+(s|m)$'
+                connectionRef:
+                  type: string
+                  description: "Name of the cluster-scoped ClickHouseConnection to run this query against."
+                queryType:
+                  type: string
+                  enum: ["data", "system"]
+                  default: "data"
+                  description: "data = one node with failover; system = fan out to every node (adds a 'node' label)."
+                maxConcurrent:
+                  type: integer
+                  minimum: 1
+                  description: "Max overlapping runs of this query. Unset -> operator default (PROMCH_DEFAULT_MAX_CONCURRENT)."
+                metric:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                      description: "Prometheus metric name."
+                      pattern: '^[a-zA-Z_:][a-zA-Z0-9_:]*$'
+                    help:
+                      type: string
+                      description: "Prometheus HELP text shown in /metrics output."
+                    labels:
+                      type: object
+                      description: "Static key-value labels added to the metric."
+                      additionalProperties:
+                        type: string
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

@@ -1,0 +1,28 @@
+# Copy to deploy/values.yaml (gitignored) and fill in for your cluster.
+image:
+  tag: "main"          # or a pinned :sha-xxxx / :vX.Y.Z
+
+serviceMonitor:
+  enabled: true        # if you run the Prometheus Operator
+  labels:
+    release: kube-prometheus-stack   # match your Prometheus' serviceMonitorSelector
+
+operator:
+  logLevel: "INFO"
+
+# Optionally create a ClickHouseConnection with the operator (cluster-scoped).
+# `spec` is passed through to the CRD. seedHosts are just bootstrap; the rest of
+# the cluster is discovered from system.clusters.
+connections:
+  - name: cluster
+    spec:
+      clusterName: my_cluster        # must match a cluster in system.clusters
+      seedHosts:
+        - "10.0.0.1"
+      port: 8123
+      username: default
+      # livenessMode: active         # active (default) | passive
+      # connectTimeout: 10           # seconds
+      # maxFailovers: null           # null = try all live nodes
+
+# resources / nodeSelector / tolerations overrides as needed

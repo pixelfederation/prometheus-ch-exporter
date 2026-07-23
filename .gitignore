@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+*.log
+
+# Distribution / packaging
+site/
+
+# Jupyter
+.ipynb_checkpoints
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Helm
+charts/*/charts/
+charts/*/tmpcharts/
+*.tgz
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+
+# Local dev — not for public repo
+.env.local
+kind-config.yaml
+LOCAL_DEV.md
+
+# Real (environment-specific) helm values — keep out of git
+deploy/values.yaml
+# Local testing helmfile — will be reworked at release, not committed here
+helmfile.yaml

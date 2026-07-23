@@ -1,0 +1,112 @@
+replicaCount: 1  # kopf standalone has no leader election; keep a single replica
+
+image:
+  repository: ghcr.io/pixelfederation/prometheus-ch-exporter
+  pullPolicy: IfNotPresent
+  tag: ""  # defaults to .Chart.AppVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+# Optional: ClickHouseConnection resources to create alongside the operator.
+# Cluster-scoped; `spec` is passed through to the CRD verbatim. Leave empty to
+# manage connections separately. Example:
+#   connections:
+#     - name: cluster
+#       spec:
+#         clusterName: my_cluster
+#         seedHosts: ["10.0.0.1"]
+#         port: 8123
+#         username: default
+connections: []
+
+# User-defined ClickHouseQuery resources (data OR system). `spec` is passed
+# through to the CRD verbatim. Your own data-query CRDs may instead live in
+# other charts; this list is for ad-hoc / OSS use.
+#   queries:
+#     - name: app-errors
+#       spec:
+#         connectionRef: cluster
+#         queryType: data
+#         query: "SELECT count() AS value, app FROM ... GROUP BY app"
+#         interval: "60s"
+#         metric: { name: app_errors, help: "Errors per app" }
+queries: []
+
+# Built-in system monitoring queries. Their SQL and metric names live in the
+# chart (templates/system-queries.yaml) and can only be toggled here, not
+# overridden. queryType: system → one series per metric, per node.
+systemQueries:
+  enabled: true
+  connectionRef: cluster
+  systemMetrics: true    # system.metrics -> clickhouse_metrics{metric,node}
+  asyncMetrics: true     # system.asynchronous_metrics -> clickhouse_asynchronous_metrics{metric,node}
+
+# Operator behavior (env -> PROMCH_*). Connection details come from the
+# ClickHouseConnection CRD, NOT from here.
+operator:
+  defaultInterval: "60s"
+  defaultTimeout: "30s"
+  defaultMaxConcurrent: 2
+  statusInterval: "15s"
+  lastErrorTtl: "10m"
+  expireAfterFailures: 5
+  # recheck/topology are parsed with float() in connection.py -> PLAIN SECONDS
+  # (NOT duration strings; "60s" would crash the operator).
+  recheckInterval: 60
+  topologyInterval: 1800
+  logLevel: "INFO"
+
+metrics:
+  port: 8080
+  service:
+    enabled: true
+    type: ClusterIP
+    annotations: {}
+
+serviceMonitor:
+  enabled: false          # requires the Prometheus Operator CRD
+  interval: "30s"
+  scrapeTimeout: "10s"
+  honorLabels: false
+  labels: {}              # e.g. release: kube-prometheus-stack
+
+health:
+  port: 8081
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
