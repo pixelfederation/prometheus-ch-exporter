@@ -3,7 +3,7 @@
 # ---- builder ----
 # Base image pinned by digest for reproducibility / supply-chain; Dependabot
 # bumps the digest. Tag kept in the reference for readability.
-FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS builder
+FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS builder
 WORKDIR /build
 COPY pyproject.toml .
 COPY LICENSE README.md .
@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir build \
     && python -m build --wheel --outdir /build/dist
 
 # ---- runtime ----
-FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS runtime
+FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS runtime
 # Debian already ships a system group named "operator" (gid 37), so create a
 # distinct group/user at uid/gid 1000 to match the chart's runAsUser/runAsGroup.
 RUN groupadd -g 1000 promch \
