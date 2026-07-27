@@ -55,6 +55,7 @@ kubeconfig
 .env.local
 kind-config.yaml
 LOCAL_DEV.md
+GITHUB_SECURITY_CHECKLIST.md
 
 # Real (environment-specific) helm values — keep out of git
 deploy/values.yaml
