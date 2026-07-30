@@ -5,6 +5,7 @@ Kept free of kopf so they are straightforward to unit-test.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,6 +19,68 @@ from ..config import OperatorConfig
 _AVAILABILITY_ERRORS = {"NoLiveNodes", "ConnectionNotReady", "NodesUnreachable"}
 
 
+@dataclass
+class ResolvedMetric:
+    """Final metric identity after prefixing + static-label validation."""
+
+    name: str
+    help: str
+    labels: dict[str, str]
+    invalid_reason: str | None
+
+
+def apply_prefix(name: str, prefix: str, policy: str) -> str:
+    """Namespace a metric name under `prefix`. `policy` decides what happens when
+    `name` already starts with `<prefix>_`: 'skip' keeps it, 'append' prepends
+    anyway, 'fail' raises. Empty prefix returns the name unchanged."""
+    if not prefix:
+        return name
+    lead = f"{prefix}_"
+    if not name.startswith(lead):
+        return f"{prefix}_{name}"
+    if policy == "skip":
+        return name
+    if policy == "append":
+        return f"{prefix}_{name}"
+    raise ValueError(
+        f"metric name {name!r} already starts with the configured prefix {prefix!r}; "
+        "set spec.metric.prefixPolicy to 'skip' to keep the name or 'append' to add it anyway"
+    )
+
+
+def reserved_label_names(node_label: str, query_type: str) -> set[str]:
+    """Labels the exporter injects and users must not define themselves."""
+    reserved = {"query_key"}
+    if query_type == "system":
+        reserved.add(node_label)
+    return reserved
+
+
+def resolve_metric(
+    metric_spec: dict[str, Any], query_type: str, prefix: str, node_label: str
+) -> ResolvedMetric:
+    """Compute the final metric identity, or mark it invalid with a reason."""
+    raw_name = str(metric_spec["name"])
+    help_text = str(metric_spec.get("help", ""))
+    labels = {str(k): str(v) for k, v in (metric_spec.get("labels") or {}).items()}
+
+    reserved = reserved_label_names(node_label, query_type)
+    clashes = sorted(set(labels) & reserved)
+    if clashes:
+        reason = (
+            f"metric.labels use reserved label name(s) {clashes}; "
+            "these are added by the exporter and must not be set"
+        )
+        return ResolvedMetric(raw_name, help_text, labels, reason)
+
+    policy = str(metric_spec.get("prefixPolicy", "fail"))
+    try:
+        final_name = apply_prefix(raw_name, prefix, policy)
+    except ValueError as exc:
+        return ResolvedMetric(raw_name, help_text, labels, str(exc))
+    return ResolvedMetric(final_name, help_text, labels, None)
+
+
 def build_rows(raw_rows: list[dict[str, Any]]) -> list[QueryResult]:
     """Map raw query rows to QueryResult.
 
@@ -27,6 +90,11 @@ def build_rows(raw_rows: list[dict[str, Any]]) -> list[QueryResult]:
     results: list[QueryResult] = []
     for raw in raw_rows:
         row = dict(raw)
+        if "query_key" in row:
+            raise ValueError(
+                "query result uses reserved column 'query_key' "
+                "(added by the exporter to identify the resource)"
+            )
         if "value" not in row:
             raise ValueError(f"query result row missing 'value' column: {list(row)}")
         try:
@@ -84,6 +152,20 @@ def derive_status(
     only writes it if it differs from the current status."""
     if snap is None:
         return {"phase": "Pending"}
+
+    # Misconfigured resource (reserved label / prefix collision): soft-fail. The
+    # operator is a controller, not an admission webhook, so we surface it as an
+    # Invalid phase + Valid=False condition rather than rejecting the apply.
+    if snap.get("invalid_reason"):
+        invalid_out: dict[str, Any] = {
+            "phase": "Invalid",
+            "invalidReason": snap["invalid_reason"],
+        }
+        _set_condition(
+            invalid_out, current, "Valid", "False", "InvalidConfiguration", snap["invalid_reason"]
+        )
+        invalid_out["conditions"].sort(key=lambda c: c.get("lastTransitionTime", ""), reverse=True)
+        return invalid_out
 
     waiting = snap.get("waiting_reason")
     if snap["expired"]:

@@ -1,3 +1,5 @@
+import re
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -47,6 +49,10 @@ class OperatorConfig(BaseSettings):
 
     log_level: str = "INFO"
 
+    # Metric naming (global; a forced org-wide namespace)
+    metric_prefix: str = "clickhouse"  # "" disables prefixing; trailing "_" ignored
+    node_label: str = "clickhouse_node"  # label carrying the source node on system queries
+
     # --- @field_validator ---
     # A decorator that runs a function automatically when pydantic sets this field.
     # Here we validate that the duration string is well-formed BEFORE the object
@@ -59,6 +65,22 @@ class OperatorConfig(BaseSettings):
     @classmethod
     def validate_duration(cls, v: str) -> str:
         parse_duration_seconds(v)
+        return v
+
+    @field_validator("metric_prefix")
+    @classmethod
+    def validate_metric_prefix(cls, v: str) -> str:
+        if v and not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", v):
+            raise ValueError(f"metric_prefix {v!r} must be empty or match [a-zA-Z_][a-zA-Z0-9_]*")
+        return v
+
+    @field_validator("node_label")
+    @classmethod
+    def validate_node_label(cls, v: str) -> str:
+        if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", v):
+            raise ValueError(f"node_label {v!r} is not a valid Prometheus label name")
+        if v == "query_key":
+            raise ValueError("node_label must not be the reserved label 'query_key'")
         return v
 
     # --- @property ---
@@ -83,3 +105,8 @@ class OperatorConfig(BaseSettings):
     @property
     def last_error_ttl_seconds(self) -> float:
         return parse_duration_seconds(self.last_error_ttl)
+
+    @property
+    def metric_prefix_normalized(self) -> str:
+        """Prefix with any trailing underscore removed (join uses a single '_')."""
+        return self.metric_prefix.rstrip("_")

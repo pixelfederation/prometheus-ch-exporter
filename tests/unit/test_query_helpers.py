@@ -4,7 +4,14 @@ import pytest
 
 from promch.collector.metrics import QueryResult
 from promch.config import OperatorConfig
-from promch.handlers.query_status import build_rows, derive_status
+from promch.handlers.query_status import (
+    ResolvedMetric,
+    apply_prefix,
+    build_rows,
+    derive_status,
+    reserved_label_names,
+    resolve_metric,
+)
 
 
 def _cfg() -> OperatorConfig:
@@ -54,6 +61,72 @@ def test_build_rows_labels_and_node() -> None:
     assert rows[0].dynamic_labels == {"app": "a", "node": "h1"}
 
 
+def test_apply_prefix_prepends() -> None:
+    assert apply_prefix("server_errors", "clickhouse", "fail") == "clickhouse_server_errors"
+
+
+def test_apply_prefix_empty_prefix_noop() -> None:
+    assert apply_prefix("server_errors", "", "fail") == "server_errors"
+
+
+def test_apply_prefix_skip_on_collision() -> None:
+    assert apply_prefix("clickhouse_foo", "clickhouse", "skip") == "clickhouse_foo"
+
+
+def test_apply_prefix_append_on_collision() -> None:
+    assert apply_prefix("clickhouse_foo", "clickhouse", "append") == "clickhouse_clickhouse_foo"
+
+
+def test_apply_prefix_fail_on_collision() -> None:
+    with pytest.raises(ValueError, match="already starts with"):
+        apply_prefix("clickhouse_foo", "clickhouse", "fail")
+
+
+def test_reserved_label_names() -> None:
+    assert reserved_label_names("clickhouse_node", "data") == {"query_key"}
+    assert reserved_label_names("clickhouse_node", "system") == {"query_key", "clickhouse_node"}
+
+
+def test_resolve_metric_ok() -> None:
+    r = resolve_metric(
+        {"name": "server_errors", "help": "h", "labels": {"env": "prod"}},
+        "data",
+        "clickhouse",
+        "clickhouse_node",
+    )
+    assert r == ResolvedMetric(
+        name="clickhouse_server_errors", help="h", labels={"env": "prod"}, invalid_reason=None
+    )
+
+
+def test_resolve_metric_reserved_static_label() -> None:
+    r = resolve_metric(
+        {"name": "m", "labels": {"query_key": "x"}}, "data", "clickhouse", "clickhouse_node"
+    )
+    assert r.invalid_reason is not None
+    assert "query_key" in r.invalid_reason
+
+
+def test_resolve_metric_reserved_node_label_only_for_system() -> None:
+    data = resolve_metric(
+        {"name": "m", "labels": {"clickhouse_node": "x"}}, "data", "clickhouse", "clickhouse_node"
+    )
+    assert data.invalid_reason is None  # node label not injected for data queries
+    system = resolve_metric(
+        {"name": "m", "labels": {"clickhouse_node": "x"}},
+        "system",
+        "clickhouse",
+        "clickhouse_node",
+    )
+    assert system.invalid_reason is not None
+
+
+def test_resolve_metric_prefix_collision_fails() -> None:
+    r = resolve_metric({"name": "clickhouse_m"}, "data", "clickhouse", "clickhouse_node")
+    assert r.invalid_reason is not None
+    assert r.name == "clickhouse_m"  # raw name retained; not emitted while invalid
+
+
 def test_build_rows_missing_value() -> None:
     with pytest.raises(ValueError, match="value"):
         build_rows([{"app": "a"}])
@@ -62,6 +135,11 @@ def test_build_rows_missing_value() -> None:
 def test_build_rows_non_numeric() -> None:
     with pytest.raises(ValueError, match="numeric"):
         build_rows([{"value": "abc"}])
+
+
+def test_build_rows_rejects_reserved_query_key_column() -> None:
+    with pytest.raises(ValueError, match="query_key"):
+        build_rows([{"value": 1, "query_key": "x"}])
 
 
 def test_derive_status_pending_when_absent() -> None:
@@ -255,3 +333,25 @@ def test_derive_status_failing_and_keeping_up_false() -> None:
     assert out["skippedTicks"] == 5
     keeping = next(c for c in out["conditions"] if c["type"] == "KeepingUp")
     assert keeping["status"] == "False"
+
+
+def test_derive_status_invalid_reason() -> None:
+    snap = {
+        "up": False,
+        "expired": False,
+        "consecutive_failures": 0,
+        "last_error": None,
+        "last_success_ts": None,
+        "row_count": 0,
+        "duration": None,
+        "skipped_total": 0,
+        "last_skip_ts": None,
+        "failed_nodes": [],
+        "invalid_reason": "metric.labels use reserved label name(s) ['query_key']",
+    }
+    out = derive_status(snap, {}, _cfg())
+    assert out["phase"] == "Invalid"
+    assert "query_key" in out["invalidReason"]
+    valid = next(c for c in out["conditions"] if c["type"] == "Valid")
+    assert valid["status"] == "False"
+    assert valid["reason"] == "InvalidConfiguration"

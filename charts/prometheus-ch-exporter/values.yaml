@@ -48,8 +48,8 @@ queries: []
 systemQueries:
   enabled: true
   connectionRef: cluster
-  systemMetrics: true    # system.metrics -> clickhouse_metrics{metric,node}
-  asyncMetrics: true     # system.asynchronous_metrics -> clickhouse_asynchronous_metrics{metric,node}
+  systemMetrics: true    # system.metrics -> clickhouse_metrics{metric,clickhouse_node}
+  asyncMetrics: true     # system.asynchronous_metrics -> clickhouse_asynchronous_metrics{metric,clickhouse_node}
 
 # Operator behavior (env -> PROMCH_*). Connection details come from the
 # ClickHouseConnection CRD, NOT from here.
@@ -65,6 +65,13 @@ operator:
   recheckInterval: 60
   topologyInterval: 1800
   logLevel: "INFO"
+  # Metric naming (global). Every metric this exporter emits is namespaced under
+  # metricPrefix (a single '_' separator is added; a trailing '_' here is ignored).
+  # Empty string disables prefixing. Also renames the operator's own metrics to
+  # <prefix>_query_* (e.g. clickhouse_query_up).
+  metricPrefix: "clickhouse"
+  # Label carrying the source node on system (fan-out) queries.
+  nodeLabel: "clickhouse_node"
 
 metrics:
   port: 8080

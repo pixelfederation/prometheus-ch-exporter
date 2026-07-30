@@ -73,6 +73,10 @@ class CachedMetric:
     # has not completed its first discovery after operator start). Not a failure.
     waiting_reason: str | None = None
 
+    # Set when the resource is misconfigured (reserved label, prefix collision):
+    # the entry exists (so status can report it) but emits no metric.
+    invalid_reason: str | None = None
+
     # Monotonic timestamp of the tick that produced the current rows.
     # Used to discard results from older ticks that arrive late (race condition
     # when a new tick fires before the previous query finishes).
@@ -114,7 +118,7 @@ class QueryMetricsCollector(Collector):
     registry: "call MY collect() method when someone scrapes /metrics".
     """
 
-    def __init__(self, registry: CollectorRegistry = REGISTRY) -> None:
+    def __init__(self, registry: CollectorRegistry = REGISTRY, prefix: str = "clickhouse") -> None:
         # `_entries` maps a resource key ("namespace/name") to its CachedMetric.
         # This is the in-memory store for all registered queries.
         self._entries: dict[str, CachedMetric] = {}
@@ -126,9 +130,17 @@ class QueryMetricsCollector(Collector):
         # This avoids holding a big lock during slow operations.
         self._global_lock = threading.Lock()
 
+        # Namespace for the operator's own system metrics (ch_query_* → <prefix>_query_*).
+        # A trailing "_" is ignored; an empty prefix disables namespacing.
+        self._prefix = prefix.rstrip("_")
+
         # Register this collector with the Prometheus registry.
         # After this call, every /metrics scrape will call our `collect()`.
         registry.register(self)
+
+    def _sys_name(self, suffix: str) -> str:
+        """System-metric family name under the configured prefix."""
+        return f"{self._prefix}_{suffix}" if self._prefix else suffix
 
     def register(
         self,
@@ -136,18 +148,34 @@ class QueryMetricsCollector(Collector):
         name: str,
         help_text: str,
         labels: dict[str, str],
+        invalid_reason: str | None = None,
     ) -> None:
-        """Add a new CRD resource to the collector.
+        """Add or update a CRD resource in the collector.
 
-        Called when a ClickHouseQuery is created or updated.
+        Called when a ClickHouseQuery is created or updated. On update, the
+        name/help/labels/invalid_reason are refreshed in place — so live spec
+        edits and validation-fix (invalid→valid) take effect — while runtime
+        state (rows, counters, inflight) is preserved.
+
         The `with self._global_lock:` block is a context manager — Python
         automatically acquires the lock on entry and releases it on exit,
         even if an exception is raised.
         """
         with self._global_lock:
-            # Only register if not already present (idempotent).
-            if key not in self._entries:
-                self._entries[key] = CachedMetric(name=name, help=help_text, labels=labels)
+            entry = self._entries.get(key)
+            if entry is None:
+                self._entries[key] = CachedMetric(
+                    name=name,
+                    help=help_text,
+                    labels=dict(labels),
+                    invalid_reason=invalid_reason,
+                )
+                return
+        with entry.lock:
+            entry.name = name
+            entry.help = help_text
+            entry.labels = dict(labels)
+            entry.invalid_reason = invalid_reason
 
     def unregister(self, key: str) -> None:
         """Remove a CRD resource from the collector.
@@ -272,6 +300,15 @@ class QueryMetricsCollector(Collector):
         with entry.lock:
             return entry.inflight
 
+    def invalid_reason(self, key: str) -> str | None:
+        """Return why the resource is misconfigured, or None if it is valid."""
+        with self._global_lock:
+            entry = self._entries.get(key)
+        if entry is None:
+            return None
+        with entry.lock:
+            return entry.invalid_reason
+
     def record_skip(self, key: str) -> None:
         with self._global_lock:
             entry = self._entries.get(key)
@@ -299,6 +336,7 @@ class QueryMetricsCollector(Collector):
                 "last_skip_ts": entry.last_skip_ts,
                 "failed_nodes": list(entry.failed_nodes),
                 "waiting_reason": entry.waiting_reason,
+                "invalid_reason": entry.invalid_reason,
             }
 
     def collect(self) -> Iterator[GaugeMetricFamily | CounterMetricFamily]:
@@ -358,30 +396,44 @@ class QueryMetricsCollector(Collector):
                         "name": entry.name,
                         "help": entry.help,
                         "static_labels": dict(entry.labels),  # copy, not reference
+                        "invalid_reason": entry.invalid_reason,
                     }
                 )
+
+        # Invalid entries (reserved label / prefix collision) emit nothing —
+        # neither system nor user samples — until the spec is fixed.
+        active = [r for r in reads if not r["invalid_reason"]]
 
         # --- Step 2: system metrics ---
         # One family per system metric name; one sample (add_metric call) per CRD.
         # Label schema is fixed: only `query_key`. Static labels from CRD spec
         # are intentionally excluded here — they belong on user metrics only.
         up_fam = GaugeMetricFamily(
-            "ch_query_up",
+            self._sys_name("query_up"),
             "1 if the last ClickHouseQuery execution succeeded, 0 otherwise",
             labels=["query_key"],
         )
         ts_fam = GaugeMetricFamily(
-            "ch_query_last_success_timestamp_seconds",
+            self._sys_name("query_last_success_timestamp_seconds"),
             "Unix timestamp of the last successful ClickHouseQuery execution",
             labels=["query_key"],
         )
         dur_fam = GaugeMetricFamily(
-            "ch_query_duration_seconds",
+            self._sys_name("query_duration_seconds"),
             "Duration of the last ClickHouseQuery execution in seconds",
             labels=["query_key"],
         )
+        # query_up covers EVERY registered query — invalid ones report 0 so a
+        # misconfiguration stays alertable in Prometheus (not only via .status).
+        # An entry that was valid before an invalidating edit keeps stale runtime
+        # state (up=True, last_success), so force 0 rather than trusting r["up"].
         for r in reads:
-            up_fam.add_metric([r["key"]], 1.0 if r["up"] else 0.0)
+            up = 0.0 if r["invalid_reason"] else (1.0 if r["up"] else 0.0)
+            up_fam.add_metric([r["key"]], up)
+        # last-success / duration describe an actual execution; invalid queries
+        # never run (and stale pre-edit values would mislead), so these — like
+        # inflight / skipped below — stay valid-only.
+        for r in active:
             if r["last_success_ts"] is not None:
                 ts_fam.add_metric([r["key"]], r["last_success_ts"])
             if r["duration"] is not None:
@@ -397,16 +449,16 @@ class QueryMetricsCollector(Collector):
             yield dur_fam
 
         inflight_fam = GaugeMetricFamily(
-            "ch_query_inflight",
+            self._sys_name("query_inflight"),
             "Number of in-flight executions for this ClickHouseQuery",
             labels=["query_key"],
         )
         skipped_fam = CounterMetricFamily(
-            "ch_query_skipped_total",
+            self._sys_name("query_skipped_total"),
             "Ticks skipped because maxConcurrent was reached",
             labels=["query_key"],
         )
-        for r in reads:
+        for r in active:
             inflight_fam.add_metric([r["key"]], r["inflight"])
             skipped_fam.add_metric([r["key"]], r["skipped_total"])
         if inflight_fam.samples:
@@ -425,7 +477,7 @@ class QueryMetricsCollector(Collector):
         # has static label `env` and CRD B has `region`, we need both in the
         # schema; A's rows get region="" and B's rows get env="".
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for r in reads:
+        for r in active:
             if not r["expired"] and r["rows"]:
                 groups[r["name"]].append(r)
 

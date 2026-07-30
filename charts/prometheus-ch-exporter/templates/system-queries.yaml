@@ -4,15 +4,17 @@
   Built-in system monitoring queries. Definitions (SQL + metric name) live here
   in the chart and are NOT overridable via values — users only toggle them with
   the per-query booleans under .Values.systemQueries. queryType: system fans out
-  to every node, adding a `node` label.
+  to every node, adding the configured node label (default `clickhouse_node`).
+  Metric names here are unprefixed; the operator prepends metricPrefix (default
+  `clickhouse`), yielding e.g. clickhouse_metrics / clickhouse_asynchronous_metrics.
 */ -}}
 {{- $builtins := list
     (dict "key" "systemMetrics" "name" "ch-system-metrics"
-      "metricName" "clickhouse_metrics"
+      "metricName" "metrics"
       "help" "ClickHouse system.metrics values (one series per metric, per node)"
       "query" "SELECT value AS value, metric FROM system.metrics")
     (dict "key" "asyncMetrics" "name" "ch-asynchronous-metrics"
-      "metricName" "clickhouse_asynchronous_metrics"
+      "metricName" "asynchronous_metrics"
       "help" "ClickHouse system.asynchronous_metrics values (one series per metric, per node)"
       "query" "SELECT value AS value, metric FROM system.asynchronous_metrics")
 }}

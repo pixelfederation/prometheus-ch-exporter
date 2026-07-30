@@ -32,7 +32,7 @@ def test_update_scalar_exposes_user_metric(collector: QueryMetricsCollector) -> 
     metrics = {m.name: m for m in collector.collect()}
     assert "my_metric" in metrics
     assert metrics["my_metric"].samples[0].value == 42.0
-    assert metrics["ch_query_up"].samples[0].value == 1.0
+    assert metrics["clickhouse_query_up"].samples[0].value == 1.0
 
 
 def test_update_multirow_exposes_multiple_series(collector: QueryMetricsCollector) -> None:
@@ -72,8 +72,8 @@ def test_mark_failure_keeps_stale_value(collector: QueryMetricsCollector) -> Non
     # stale user metric is still present
     assert "my_metric" in metrics
     assert metrics["my_metric"].samples[0].value == 42.0
-    # but ch_query_up signals the failure
-    assert metrics["ch_query_up"].samples[0].value == 0.0
+    # but clickhouse_query_up signals the failure
+    assert metrics["clickhouse_query_up"].samples[0].value == 0.0
 
 
 def test_expire_removes_user_metric(collector: QueryMetricsCollector) -> None:
@@ -89,7 +89,7 @@ def test_expire_removes_user_metric(collector: QueryMetricsCollector) -> None:
 
     metrics = {m.name: m for m in collector.collect()}
     assert "my_metric" not in metrics
-    assert metrics["ch_query_up"].samples[0].value == 0.0
+    assert metrics["clickhouse_query_up"].samples[0].value == 0.0
 
 
 def test_unregister_removes_all(collector: QueryMetricsCollector) -> None:
@@ -142,8 +142,8 @@ def test_collect_emits_inflight_and_skipped(collector: QueryMetricsCollector) ->
     collector.inc_inflight("ns/q")
     collector.record_skip("ns/q")
     names = {s.name for fam in collector.collect() for s in fam.samples}
-    assert "ch_query_inflight" in names
-    assert "ch_query_skipped_total" in names
+    assert "clickhouse_query_inflight" in names
+    assert "clickhouse_query_skipped_total" in names
 
 
 def test_mark_waiting_then_success_clears(collector: QueryMetricsCollector) -> None:
@@ -164,3 +164,77 @@ def test_update_stores_failed_nodes(collector: QueryMetricsCollector) -> None:
     # a later successful run with no failures clears it
     collector.update("ns/q", [QueryResult(1.0, {"node": "h1"})], 0.1, tick_ts=2.0)
     assert collector.snapshot("ns/q")["failed_nodes"] == []
+
+
+def test_system_metric_names_use_prefix() -> None:
+    registry = CollectorRegistry()
+    c = QueryMetricsCollector(registry=registry, prefix="clickhouse")
+    c.register("ns/q", "m", "h", {})
+    c.update("ns/q", [QueryResult(1.0, {})], 0.1, tick_ts=0.0)
+    names = {m.name for m in c.collect()}
+    assert "clickhouse_query_up" in names
+    assert "ch_query_up" not in names
+
+
+def test_system_metric_names_custom_prefix() -> None:
+    registry = CollectorRegistry()
+    c = QueryMetricsCollector(registry=registry, prefix="acme_clickhouse")
+    c.register("ns/q", "m", "h", {})
+    c.update("ns/q", [QueryResult(1.0, {})], 0.1, tick_ts=0.0)
+    names = {m.name for m in c.collect()}
+    assert "acme_clickhouse_query_up" in names
+
+
+def test_register_invalid_hides_metric_and_reports_reason(collector: QueryMetricsCollector) -> None:
+    collector.register("ns/bad", "m", "h", {}, invalid_reason="reserved label 'query_key'")
+    collector.update("ns/bad", [QueryResult(1.0, {})], 0.1, tick_ts=0.0)
+    names = {m.name for m in collector.collect()}
+    assert "m" not in names  # invalid entries emit no user metric
+    assert collector.invalid_reason("ns/bad") == "reserved label 'query_key'"
+    assert collector.snapshot("ns/bad")["invalid_reason"] == "reserved label 'query_key'"
+
+
+def test_invalid_reports_query_up_zero_and_nothing_else(collector: QueryMetricsCollector) -> None:
+    """An invalid query stays alertable via query_up=0, but emits no user metric
+    and no execution metrics (it never runs)."""
+    collector.register("ns/bad", "m", "h", {}, invalid_reason="bad config")
+    fams = {m.name: m for m in collector.collect()}
+    up = {s.labels["query_key"]: s.value for s in fams["clickhouse_query_up"].samples}
+    assert up["ns/bad"] == 0.0
+    assert "m" not in fams  # no user metric
+    assert "clickhouse_query_duration_seconds" not in fams
+    assert "clickhouse_query_last_success_timestamp_seconds" not in fams
+    assert "clickhouse_query_inflight" not in fams
+    assert "clickhouse_query_skipped_total" not in fams
+
+
+def test_invalidating_valid_query_forces_up_zero(collector: QueryMetricsCollector) -> None:
+    """A query edited from valid into invalid keeps stale runtime state (up=True,
+    cached rows); query_up must still report 0 and the user metric must vanish."""
+    collector.register("ns/q", "m", "h", {})
+    collector.update("ns/q", [QueryResult(1.0, {})], 0.1, tick_ts=0.0)
+    up_valid = {
+        s.labels["query_key"]: s.value
+        for fam in collector.collect()
+        if fam.name == "clickhouse_query_up"
+        for s in fam.samples
+    }
+    assert up_valid["ns/q"] == 1.0
+    collector.register("ns/q", "m", "h", {}, invalid_reason="now bad")
+    fams = {m.name: m for m in collector.collect()}
+    up = {s.labels["query_key"]: s.value for s in fams["clickhouse_query_up"].samples}
+    assert up["ns/q"] == 0.0
+    assert "m" not in fams  # user metric suppressed despite cached rows
+
+
+def test_re_register_updates_name_and_clears_invalid(collector: QueryMetricsCollector) -> None:
+    collector.register("ns/q", "old", "h", {}, invalid_reason="bad")
+    assert collector.invalid_reason("ns/q") == "bad"
+    collector.register("ns/q", "new_name", "h2", {"env": "prod"})
+    assert collector.invalid_reason("ns/q") is None
+    entry_snap = collector.snapshot("ns/q")
+    assert entry_snap is not None
+    collector.update("ns/q", [QueryResult(1.0, {})], 0.1, tick_ts=1.0)
+    metrics = {m.name: m for m in collector.collect()}
+    assert "new_name" in metrics
+    assert "old" not in metrics

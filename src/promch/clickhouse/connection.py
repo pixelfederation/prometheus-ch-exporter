@@ -87,7 +87,9 @@ class ClickHouseConnection:
             except NodeQueryError:
                 raise  # deterministic — failover would not help
 
-    async def execute_system_query(self, sql: str, timeout: float) -> SystemQueryResult:
+    async def execute_system_query(
+        self, sql: str, timeout: float, node_label: str = "node"
+    ) -> SystemQueryResult:
         nodes = self._topology.all_live()
         if not nodes:
             raise NoLiveNodesError(f"no live nodes for cluster {self._spec.cluster_name}")
@@ -101,9 +103,11 @@ class ClickHouseConnection:
                 failed.append(node.host)
                 continue
             for row in node_rows:
-                if "node" in row:
-                    raise NodeQueryError(f"query result uses reserved column 'node' on {node.host}")
-                row["node"] = node.host
+                if node_label in row:
+                    raise NodeQueryError(
+                        f"query result uses reserved column {node_label!r} on {node.host}"
+                    )
+                row[node_label] = node.host
                 rows.append(row)
 
         # A system query should reflect the WHOLE cluster: include members that

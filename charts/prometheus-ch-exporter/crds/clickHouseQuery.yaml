@@ -81,6 +81,14 @@ spec:
                       description: "Static key-value labels added to the metric."
                       additionalProperties:
                         type: string
+                    prefixPolicy:
+                      type: string
+                      enum: ["skip", "append", "fail"]
+                      default: "fail"
+                      description: "What to do when metric.name already starts with the operator's configured prefix: skip (keep the name), append (add the prefix anyway), fail (mark the query Invalid). Default fail."
+                  x-kubernetes-validations:
+                    - rule: "!has(self.labels) || self.labels.all(k, k != 'query_key')"
+                      message: "metric.labels must not use the reserved label 'query_key' (added by the exporter)"
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

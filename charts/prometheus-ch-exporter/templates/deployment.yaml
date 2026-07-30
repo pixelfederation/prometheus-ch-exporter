@@ -66,6 +66,10 @@ spec:
               value: {{ .Values.health.port | quote }}
             - name: PROMCH_LOG_LEVEL
               value: {{ .Values.operator.logLevel | quote }}
+            - name: PROMCH_METRIC_PREFIX
+              value: {{ .Values.operator.metricPrefix | quote }}
+            - name: PROMCH_NODE_LABEL
+              value: {{ .Values.operator.nodeLabel | quote }}
           livenessProbe:
             httpGet:
               path: /healthz

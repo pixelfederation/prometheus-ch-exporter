@@ -31,3 +31,42 @@ def test_operator_config_defaults() -> None:
     assert config.status_interval_seconds == 15.0
     assert config.last_error_ttl_seconds == 600.0
     assert config.expire_after_failures == 5
+
+
+def test_metric_prefix_and_node_label_defaults() -> None:
+    config = OperatorConfig()  # type: ignore[call-arg]
+    assert config.metric_prefix == "clickhouse"
+    assert config.metric_prefix_normalized == "clickhouse"
+    assert config.node_label == "clickhouse_node"
+
+
+def test_metric_prefix_normalized_strips_trailing_underscore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROMCH_METRIC_PREFIX", "clickhouse_")
+    config = OperatorConfig()  # type: ignore[call-arg]
+    assert config.metric_prefix_normalized == "clickhouse"
+
+
+def test_metric_prefix_empty_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMCH_METRIC_PREFIX", "")
+    config = OperatorConfig()  # type: ignore[call-arg]
+    assert config.metric_prefix_normalized == ""
+
+
+def test_metric_prefix_invalid_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMCH_METRIC_PREFIX", "1bad-prefix")
+    with pytest.raises(ValueError):
+        OperatorConfig()  # type: ignore[call-arg]
+
+
+def test_node_label_invalid_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMCH_NODE_LABEL", "bad-label")
+    with pytest.raises(ValueError):
+        OperatorConfig()  # type: ignore[call-arg]
+
+
+def test_node_label_cannot_be_query_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMCH_NODE_LABEL", "query_key")
+    with pytest.raises(ValueError):
+        OperatorConfig()  # type: ignore[call-arg]

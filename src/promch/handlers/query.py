@@ -23,7 +23,7 @@ from ..collector.metrics import QueryMetricsCollector
 from ..config import OperatorConfig
 from ..utils import parse_duration_seconds
 from .connection import get_connection
-from .query_status import build_rows, derive_status
+from .query_status import build_rows, derive_status, resolve_metric
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ async def startup(**kwargs: Any) -> None:
     # clickhouse-connect logs every failed ping as a DEBUG traceback; those
     # failures are expected and handled by us (Node marks the node down).
     logging.getLogger("clickhouse_connect").setLevel(logging.WARNING)
-    _collector = QueryMetricsCollector()
+    _collector = QueryMetricsCollector(prefix=_config.metric_prefix_normalized)
     from prometheus_client import start_http_server
 
     start_http_server(_config.metrics_port)
@@ -108,18 +108,27 @@ async def cancel_pending(**kwargs: Any) -> None:
 @kopf.on.resume(*_CRD)
 @kopf.on.update(*_CRD)
 async def register(spec: kopf.Spec, name: str, namespace: str | None, **kwargs: Any) -> None:
-    assert _collector is not None
+    assert _collector is not None and _config is not None
     key = _resource_key(namespace, name)
-    metric = spec["metric"]
-    _collector.register(key, metric["name"], metric.get("help", ""), metric.get("labels", {}))
-    logger.info(
-        "query %s registered (metric=%s connection=%s type=%s interval=%s)",
-        key,
-        metric["name"],
-        spec.get("connectionRef"),
-        spec.get("queryType", "data"),
-        spec.get("interval", "<default>"),
+    metric = dict(spec["metric"])
+    query_type = str(spec.get("queryType", "data"))
+    resolved = resolve_metric(
+        metric, query_type, _config.metric_prefix_normalized, _config.node_label
     )
+    _collector.register(
+        key, resolved.name, resolved.help, resolved.labels, invalid_reason=resolved.invalid_reason
+    )
+    if resolved.invalid_reason:
+        logger.warning("query %s invalid: %s", key, resolved.invalid_reason)
+    else:
+        logger.info(
+            "query %s registered (metric=%s connection=%s type=%s interval=%s)",
+            key,
+            resolved.name,
+            spec.get("connectionRef"),
+            query_type,
+            spec.get("interval", "<default>"),
+        )
 
 
 @kopf.on.delete(*_CRD)
@@ -150,6 +159,13 @@ async def query_scheduler(
         query_type = str(spec.get("queryType", "data"))
         conn_ref = str(spec["connectionRef"])
         sql = str(spec["query"])
+
+        invalid = collector.invalid_reason(key)
+        if invalid is not None:
+            logger.warning("query %s not run (invalid): %s", key, invalid)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(stopped.wait(), timeout=interval)
+            continue
 
         conn = get_connection(conn_ref)
         if conn is None or not conn.ready:
@@ -191,7 +207,8 @@ async def _execute(
             logger.warning("query %s: connection %r not found", key, conn_ref)
             return
         if query_type == "system":
-            result = await conn.execute_system_query(sql, timeout)
+            assert _config is not None
+            result = await conn.execute_system_query(sql, timeout, _config.node_label)
             if not result.rows and result.failed_nodes:
                 _fail(
                     key, "NodesUnreachable", f"all nodes failed: {', '.join(result.failed_nodes)}"
@@ -262,7 +279,9 @@ async def status_reflector(
     # aggregated server-side by k8s (count + lastTimestamp), so no throttle needed.
     new_phase = desired.get("phase")
     if new_phase is not None and _event_signature(status) != _event_signature(desired):
-        etype = "Warning" if new_phase in ("Failing", "Expired", "Degraded") else "Normal"
+        etype = (
+            "Warning" if new_phase in ("Failing", "Expired", "Degraded", "Invalid") else "Normal"
+        )
         detail = _phase_detail(snap)
         message = f"{old_phase or 'None'} -> {new_phase}" + (f": {detail}" if detail else "")
         kopf.event(body, type=etype, reason=str(new_phase), message=message)

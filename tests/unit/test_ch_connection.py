@@ -177,6 +177,27 @@ async def test_system_query_reserved_node_column_errors() -> None:
         await conn.execute_system_query("SELECT 1 AS value, 'x' AS node", timeout=5)
 
 
+async def test_system_query_custom_node_label() -> None:
+    conn = make_connection(lambda host: FakeQueryResult(["value"], [(1,)]), ["h1", "h2"])
+    await _bring_up(conn)
+    result = await conn.execute_system_query(
+        "SELECT 1 AS value", timeout=5, node_label="clickhouse_node"
+    )
+    by_node = {r["clickhouse_node"]: r["value"] for r in result.rows}
+    assert by_node == {"h1": 1, "h2": 1}
+
+
+async def test_system_query_reserved_custom_node_label_errors() -> None:
+    conn = make_connection(
+        lambda host: FakeQueryResult(["value", "clickhouse_node"], [(1, "x")]), ["h1"]
+    )
+    await _bring_up(conn)
+    with pytest.raises(NodeQueryError, match="reserved column 'clickhouse_node'"):
+        await conn.execute_system_query(
+            "SELECT 1 AS value, 'x' AS clickhouse_node", timeout=5, node_label="clickhouse_node"
+        )
+
+
 async def test_status_snapshot_phases() -> None:
     conn = make_connection(lambda host: FakeQueryResult(["value"], [(1,)]), ["h1", "h2"])
     # nothing up yet -> Down
