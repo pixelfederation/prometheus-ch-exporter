@@ -16,7 +16,7 @@ dependencies = [
     # "kubernetes>=29.0",
     # "kubernetes_asyncio>=29.0",
     "clickhouse-connect>=0.7",
-    "prometheus-client>=0.20",
+    "prometheus-client>=0.26.0",
     "pydantic-settings>=2.0",
 ]
 
