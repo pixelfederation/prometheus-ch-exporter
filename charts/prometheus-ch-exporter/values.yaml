@@ -1,4 +1,17 @@
-replicaCount: 1  # kopf standalone has no leader election; keep a single replica
+replicaCount: 1  # HA: set to 2 (or more) AND peering.enabled=true
+
+# High availability via kopf peering (active/standby). Requires the peering CRD
+# from the prometheus-ch-exporter-crds chart. Leader runs queries + serves
+# metrics; standbys freeze (empty /metrics) so there are no duplicate series.
+peering:
+  enabled: false
+  name: "prometheus-ch-exporter"   # ClusterKopfPeering object name (isolates from other kopf operators)
+  lifetime: 60                     # keep-alive TTL (s); lower => faster crash failover
+
+# Guard against voluntary disruptions taking down all replicas at once.
+podDisruptionBudget:
+  enabled: false                   # enable together with HA
+  minAvailable: 1
 
 image:
   repository: ghcr.io/pixelfederation/prometheus-ch-exporter

@@ -87,3 +87,20 @@ def test_log_level_invalid_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROMCH_LOG_LEVEL", "verbose")
     with pytest.raises(ValueError):
         OperatorConfig()  # type: ignore[call-arg]
+
+
+def test_peering_defaults() -> None:
+    config = OperatorConfig()  # type: ignore[call-arg]
+    assert config.peering_enabled is False
+    assert config.peering_name == "prometheus-ch-exporter"
+    assert config.peering_lifetime == 60.0
+
+
+def test_peering_enabled_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMCH_PEERING_ENABLED", "true")
+    monkeypatch.setenv("PROMCH_PEERING_NAME", "custom-peering")
+    monkeypatch.setenv("PROMCH_PEERING_LIFETIME", "30")
+    config = OperatorConfig()  # type: ignore[call-arg]
+    assert config.peering_enabled is True
+    assert config.peering_name == "custom-peering"
+    assert config.peering_lifetime == 30.0

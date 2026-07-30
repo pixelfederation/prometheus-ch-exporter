@@ -205,6 +205,70 @@ values). A `ClickHouseQuery` may override `interval`, `timeout`, and
 | `PROMCH_METRIC_PREFIX` | `clickhouse` | Namespace prepended to every metric (see below); empty disables it |
 | `PROMCH_NODE_LABEL` | `clickhouse_node` | Label carrying the source node on system queries |
 
+## High availability
+
+Run multiple replicas for availability (not horizontal scale) using kopf
+peering for active/standby leader election. The leader runs queries and serves
+`clickhouse_*` metrics; standbys freeze and emit only `process_*` / `python_*`.
+Prometheus scrapes all pods, but only the leader emits business series — so
+there are **no duplicate metrics** by construction. The app chart ships the
+`ClusterKopfPeering` object that leader election needs (kopf does not create it
+itself); without it every replica would pause at startup and none would serve
+metrics.
+
+**Install order.** Install the CRD chart first (it carries the shared kopf
+peering CRD), then the app chart with HA enabled:
+
+```bash
+helm upgrade --install promch-crds charts/prometheus-ch-exporter-crds -n monitoring --create-namespace
+helm upgrade --install promch charts/prometheus-ch-exporter -n monitoring \
+  --set replicaCount=2 --set peering.enabled=true --set podDisruptionBudget.enabled=true
+```
+
+`replicaCount > 1` without `peering.enabled=true` is rejected at render time
+(otherwise replicas run active-active and produce duplicate metrics).
+
+**Failover.** Graceful (deploy/drain — kopf blanks the peering slot on exit)
+takes ~seconds. Ungraceful (OOM/crash) takes up to `peering.lifetime`
+(default 60s) plus one query interval to repopulate `/metrics`.
+
+**Multiple kopf operators.** The peering `name` (default `prometheus-ch-exporter`)
+isolates our replicas from other kopf operators sharing the generic
+`clusterkopfpeerings.kopf.dev` CRD. If another operator or a cluster admin
+already installs that CRD, set `kopfPeeringCRD.install=false` in the CRD chart.
+
+**CRD upgrades.** `helm upgrade` the `prometheus-ch-exporter-crds` chart when
+CRDs change; the CRDs live in `templates/` so upgrades re-apply them.
+Uninstalling the app chart never removes CRDs.
+
+### Monitoring & alerting
+
+No ServiceMonitor change is needed. Business series "move" between pods on
+failover, so aggregate away from pod identity:
+
+```promql
+sum without (pod, instance) (clickhouse_metrics)
+```
+
+Alert when there is no active leader:
+
+```yaml
+- alert: PromchNoLeader
+  expr: count(clickhouse_query_up) == 0
+  for: 2m
+```
+
+Alert on split-brain (more than one pod serving business metrics):
+
+```yaml
+- alert: PromchMultipleActive
+  expr: count(count by (pod) (clickhouse_query_up)) > 1
+  for: 5m
+```
+
+(If `metric_prefix` is customised, adjust `clickhouse_query_up` /
+`clickhouse_metrics` to the configured prefix.)
+
 ## Status
 
 Each resource reports health in its `.status` (see `kubectl describe`):

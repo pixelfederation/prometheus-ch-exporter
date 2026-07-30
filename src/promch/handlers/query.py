@@ -21,6 +21,7 @@ import kopf
 from ..clickhouse.errors import NodeQueryError, NoLiveNodesError
 from ..collector.metrics import QueryMetricsCollector
 from ..config import OperatorConfig
+from ..peering import configure_peering
 from ..utils import parse_duration_seconds
 from .connection import get_connection
 from .query_status import build_rows, derive_status, resolve_metric
@@ -74,9 +75,10 @@ def _resolve(spec: kopf.Spec, field: str, default_seconds: float) -> float:
 
 
 @kopf.on.startup()
-async def startup(**kwargs: Any) -> None:
+async def startup(settings: kopf.OperatorSettings, **kwargs: Any) -> None:
     global _config, _collector
     _config = OperatorConfig()
+    configure_peering(settings, _config)
     logging.basicConfig(
         level=_config.log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

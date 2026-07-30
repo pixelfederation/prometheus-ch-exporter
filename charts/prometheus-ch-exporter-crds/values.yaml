@@ -1,0 +1,5 @@
+# The ClusterKopfPeering CRD is a GENERIC kopf resource (clusterkopfpeerings.kopf.dev),
+# shared by every kopf operator on the cluster. Set false if another kopf operator
+# or a cluster admin already installs it, to avoid an ownership conflict.
+kopfPeeringCRD:
+  install: true

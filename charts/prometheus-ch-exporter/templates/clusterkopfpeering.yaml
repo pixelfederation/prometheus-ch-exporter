@@ -1,0 +1,13 @@
+{{- if .Values.peering.enabled }}
+# The peering OBJECT must exist for kopf to elect a leader: kopf does NOT
+# auto-create it (by design). With an explicit peering name and mandatory
+# peering, a missing object makes every replica pause at startup (no leader,
+# no metrics) instead of falling back to standalone. So we ship it here.
+# Cluster-scoped (ClusterKopfPeering) to match clusterwide=True.
+apiVersion: kopf.dev/v1
+kind: ClusterKopfPeering
+metadata:
+  name: {{ .Values.peering.name }}
+  labels:
+    {{- include "prometheus-ch-exporter.labels" . | nindent 4 }}
+{{- end }}

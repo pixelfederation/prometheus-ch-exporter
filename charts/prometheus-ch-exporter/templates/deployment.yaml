@@ -1,3 +1,6 @@
+{{- if and (gt (int .Values.replicaCount) 1) (not .Values.peering.enabled) }}
+{{- fail "replicaCount > 1 requires peering.enabled=true (otherwise replicas run active-active and produce duplicate metrics)" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -70,6 +73,16 @@ spec:
               value: {{ .Values.operator.metricPrefix | quote }}
             - name: PROMCH_NODE_LABEL
               value: {{ .Values.operator.nodeLabel | quote }}
+            - name: PROMCH_PEERING_ENABLED
+              value: {{ .Values.peering.enabled | quote }}
+            - name: PROMCH_PEERING_NAME
+              value: {{ .Values.peering.name | quote }}
+            - name: PROMCH_PEERING_LIFETIME
+              value: {{ .Values.peering.lifetime | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           livenessProbe:
             httpGet:
               path: /healthz
@@ -87,9 +100,19 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- if .Values.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if .Values.peering.enabled }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "prometheus-ch-exporter.selectorLabels" . | nindent 20 }}
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:

@@ -40,6 +40,12 @@ class OperatorConfig(BaseSettings):
     expire_after_failures: int = 5
     # global_barrier: bool = False
 
+    # High availability (kopf peering). Disabled => single-replica standalone
+    # (exactly today's behavior). Enabled => active/standby leader election.
+    peering_enabled: bool = False
+    peering_name: str = "prometheus-ch-exporter"  # ClusterKopfPeering object name
+    peering_lifetime: float = 60.0  # keep-alive TTL in seconds; lower => faster crash failover
+
     # Status / error history
     error_history_window_minutes: int = 30
     max_error_history_entries: int = 50
