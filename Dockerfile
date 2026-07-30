@@ -1,15 +1,29 @@
 # syntax=docker/dockerfile:1
 
+# Pinned uv binary. Digest-pin it like the base image below (tag kept for
+# readability). Get the digest with:
+#   docker buildx imagetools inspect ghcr.io/astral-sh/uv:0.7.13
+# then append  @sha256:<digest>  to the reference.
+FROM ghcr.io/astral-sh/uv:0.7.13@sha256:6c1e19020ec221986a210027040044a5df8de762eb36d5240e382bc41d7a9043 AS uv
+
 # ---- builder ----
 # Base image pinned by digest for reproducibility / supply-chain; Dependabot
 # bumps the digest. Tag kept in the reference for readability.
 FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS builder
-WORKDIR /build
-COPY pyproject.toml .
-COPY LICENSE README.md .
+COPY --from=uv /uv /usr/local/bin/uv
+WORKDIR /app
+# Use the base image's Python (never let uv download its own); copy-mode links so
+# the resulting .venv is self-contained and portable to the runtime stage.
+ENV UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
+# 1) Install locked runtime deps first (cache layer independent of source).
+COPY pyproject.toml uv.lock .python-version ./
+RUN uv sync --frozen --no-dev --no-install-project
+# 2) Install the project itself, copied (non-editable) so runtime needs no src/.
+COPY LICENSE README.md ./
 COPY src/ src/
-RUN pip install --no-cache-dir build \
-    && python -m build --wheel --outdir /build/dist
+RUN uv sync --frozen --no-dev --no-editable
 
 # ---- runtime ----
 FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS runtime
@@ -18,8 +32,9 @@ FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd
 RUN groupadd -g 1000 promch \
     && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin promch
 WORKDIR /app
-COPY --from=builder /build/dist/*.whl .
-RUN pip install --no-cache-dir *.whl && rm -f *.whl
+# Only the built virtualenv crosses into runtime — no uv, no source tree.
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 USER promch
 # 8080 = Prometheus /metrics, 8081 = kopf liveness /healthz
 EXPOSE 8080 8081

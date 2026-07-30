@@ -1,0 +1,23 @@
+name: Dependency Audit
+
+# Catches CVEs disclosed *after* a PR merged, without waiting for an unrelated
+# PR to trigger the CI gate. Also runnable on demand.
+on:
+  schedule:
+    - cron: "0 8 * * 1"   # Mondays 08:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: CVE Audit (scheduled)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - run: uv run pip-audit --skip-editable
