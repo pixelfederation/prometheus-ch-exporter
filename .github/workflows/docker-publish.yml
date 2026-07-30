@@ -3,9 +3,8 @@ name: docker-publish
 on:
   push:
     tags:
-      - "v*"        # app release: build+push image AND publish the chart
-      - "chart-*"   # chart-only release: publish the chart, no image build
-      - "crds-*"    # CRD-chart-only release: publish the CRDs chart
+      - "v*"        # full release: build+push image AND publish both charts
+      - "chart-*"   # charts-only release: publish both charts (1:1), no image build
   workflow_dispatch:
 
 env:
@@ -74,23 +73,27 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
 
-  chart-release:
-    # Runs for both v* (app+chart) and chart-* (chart only). Independent of the
-    # image build — the chart is packaged from Chart.yaml (version + appVersion),
-    # so a chart-only bump publishes without rebuilding the app image. Excludes
-    # crds-* (handled by crd-chart-release).
+  charts-release:
+    # Both charts (app + CRDs) are versioned in lockstep and released together.
+    # Runs for v* (full release, alongside the image) and chart-* (charts only,
+    # no image). Charts are packaged from each Chart.yaml (version + appVersion),
+    # so a charts-only bump publishes without rebuilding the app image. This is
+    # the ONLY job that creates the GitHub Release for the tag (build-and-push
+    # does not), so there is no race on the release object.
     if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/chart-')
     runs-on: ubuntu-latest
     permissions:
       contents: write   # create the GitHub Release
-      packages: write   # push the chart to GHCR (OCI)
+      packages: write   # push the charts to GHCR (OCI)
     steps:
       - uses: actions/checkout@v7
 
       - uses: azure/setup-helm@v5
 
-      - name: Package Helm chart
-        run: helm package charts/prometheus-ch-exporter --destination ./dist
+      - name: Package Helm charts
+        run: |
+          helm package charts/prometheus-ch-exporter --destination ./dist
+          helm package charts/prometheus-ch-exporter-crds --destination ./dist
 
       - name: Log in to GHCR (Helm OCI)
         run: |
@@ -98,40 +101,11 @@ jobs:
             --username "${{ github.actor }}" \
             --password "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: Push chart to GHCR (OCI)
+      - name: Push charts to GHCR (OCI)
         run: |
-          helm push dist/*.tgz "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
-          files: dist/*.tgz
-
-  crd-chart-release:
-    # CRD chart has an independent lifecycle; released via crds-* tags.
-    if: startsWith(github.ref, 'refs/tags/crds-')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write   # create the GitHub Release
-      packages: write   # push the chart to GHCR (OCI)
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: azure/setup-helm@v5
-
-      - name: Package Helm chart
-        run: helm package charts/prometheus-ch-exporter-crds --destination ./dist
-
-      - name: Log in to GHCR (Helm OCI)
-        run: |
-          helm registry login "${{ env.REGISTRY }}" \
-            --username "${{ github.actor }}" \
-            --password "${{ secrets.GITHUB_TOKEN }}"
-
-      - name: Push chart to GHCR (OCI)
-        run: |
-          helm push dist/*.tgz "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
+          for chart in dist/*.tgz; do
+            helm push "$chart" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
+          done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
