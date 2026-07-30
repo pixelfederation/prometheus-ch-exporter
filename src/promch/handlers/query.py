@@ -89,6 +89,9 @@ async def startup(**kwargs: Any) -> None:
     # clickhouse-connect logs every failed ping as a DEBUG traceback; those
     # failures are expected and handled by us (Node marks the node down).
     logging.getLogger("clickhouse_connect").setLevel(logging.WARNING)
+    # kopf's liveness aiohttp server logs every kube-probe GET /healthz at INFO
+    # on `aiohttp.access` — one line per probe interval, pure noise.
+    logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
     _collector = QueryMetricsCollector(prefix=_config.metric_prefix_normalized)
     from prometheus_client import start_http_server
 
@@ -176,7 +179,7 @@ async def query_scheduler(
                 f"Waiting for connection {conn_ref!r} to complete its first "
                 "topology/liveness check after operator start",
             )
-            logger.info("query %s waiting: connection %r not ready yet", key, conn_ref)
+            logger.debug("query %s waiting: connection %r not ready yet", key, conn_ref)
         elif collector.inflight(key) >= max_concurrent:
             collector.record_skip(key)
             logger.warning(
@@ -220,7 +223,9 @@ async def _execute(
             raw = await conn.execute_data_query(sql, timeout)
             failed_nodes = []
         rows = build_rows(raw)
-        collector.update(key, rows, time.monotonic() - start, tick_ts, failed_nodes=failed_nodes)
+        recovered = collector.update(
+            key, rows, time.monotonic() - start, tick_ts, failed_nodes=failed_nodes
+        )
         if failed_nodes:
             logger.warning(
                 "query %s ok: %d rows; %d node(s) failed: %s",
@@ -229,8 +234,12 @@ async def _execute(
                 len(failed_nodes),
                 ", ".join(failed_nodes),
             )
+        elif recovered:
+            # Transition into healthy (first success or recovery after failure) —
+            # a production signal, logged at INFO. Steady-state runs stay DEBUG.
+            logger.info("query %s healthy: %d rows", key, len(rows))
         else:
-            logger.info("query %s ok: %d rows", key, len(rows))
+            logger.debug("query %s ok: %d rows", key, len(rows))
     except NoLiveNodesError as exc:
         # A system query that can't run at all → report every member as down
         # (it couldn't enumerate them itself). Data queries have no node list.

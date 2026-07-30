@@ -194,7 +194,7 @@ class QueryMetricsCollector(Collector):
         duration_seconds: float,
         tick_ts: float,
         failed_nodes: list[str] | None = None,
-    ) -> None:
+    ) -> bool:
         """Store successful query results (one or more rows).
 
         Called from a background thread after a query completes.
@@ -208,6 +208,11 @@ class QueryMetricsCollector(Collector):
         `tick_ts` is the monotonic timestamp of the tick that started this query.
         If a newer tick's result already arrived (faster query on next interval),
         we discard this stale result to avoid overwriting newer data with older.
+
+        Returns True if this success is a transition INTO the healthy state —
+        i.e. the first-ever success, or a recovery after failure/expiry — so the
+        caller can log that as a production signal. Returns False for a
+        steady-state success and for a discarded stale-tick result.
         """
         # Step 1: look up the entry under the global lock, then release it.
         # We don't hold the global lock while updating — that would block
@@ -216,14 +221,17 @@ class QueryMetricsCollector(Collector):
             entry = self._entries.get(key)
 
         if entry is None:
-            return  # resource was deleted between query start and completion
+            return False  # resource was deleted between query start and completion
 
         # Step 2: update the entry's fields under its own lock.
         with entry.lock:
             # Discard results from older ticks — a newer tick already updated the cache.
             # This prevents a slow query from overwriting a faster, more recent result.
             if tick_ts < entry.tick_ts:
-                return
+                return False
+            # `up` is False before the first success and is cleared on every
+            # failure/expiry — so `not entry.up` marks a transition into healthy.
+            recovered = not entry.up
             entry.tick_ts = tick_ts
             entry.rows = rows
             entry.last_success_ts = time.time()  # current unix timestamp
@@ -236,6 +244,7 @@ class QueryMetricsCollector(Collector):
             # out after last_error_ttl.
             entry.failed_nodes = list(failed_nodes or [])
             entry.waiting_reason = None
+            return recovered
 
     def mark_failure(
         self, key: str, error_type: str, message: str, failed_nodes: list[str] | None = None

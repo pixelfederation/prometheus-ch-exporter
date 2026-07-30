@@ -70,3 +70,20 @@ def test_node_label_cannot_be_query_key(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("PROMCH_NODE_LABEL", "query_key")
     with pytest.raises(ValueError):
         OperatorConfig()  # type: ignore[call-arg]
+
+
+def test_log_level_default() -> None:
+    config = OperatorConfig()  # type: ignore[call-arg]
+    assert config.log_level == "INFO"
+
+
+def test_log_level_lowercase_normalized(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMCH_LOG_LEVEL", "debug")
+    config = OperatorConfig()  # type: ignore[call-arg]
+    assert config.log_level == "DEBUG"
+
+
+def test_log_level_invalid_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROMCH_LOG_LEVEL", "verbose")
+    with pytest.raises(ValueError):
+        OperatorConfig()  # type: ignore[call-arg]

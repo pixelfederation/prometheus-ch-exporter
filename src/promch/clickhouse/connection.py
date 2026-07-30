@@ -69,7 +69,7 @@ class ClickHouseConnection:
                     raise last_error
                 raise NoLiveNodesError(f"no live nodes for cluster {self._spec.cluster_name}")
             try:
-                logger.info(
+                logger.debug(
                     "data query on cluster %s -> node %s%s",
                     self._spec.cluster_name,
                     node.host,

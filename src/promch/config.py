@@ -67,6 +67,18 @@ class OperatorConfig(BaseSettings):
         parse_duration_seconds(v)
         return v
 
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
+        # `logging` only accepts the canonical upper-case level names, so a
+        # value like "debug" would crash basicConfig at startup. Normalise to
+        # upper-case and reject anything unknown with a clear message.
+        level = v.strip().upper()
+        allowed = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
+        if level not in allowed:
+            raise ValueError(f"log_level {v!r} must be one of {', '.join(sorted(allowed))}")
+        return level
+
     @field_validator("metric_prefix")
     @classmethod
     def validate_metric_prefix(cls, v: str) -> str:

@@ -57,6 +57,26 @@ def test_update_multirow_exposes_multiple_series(collector: QueryMetricsCollecto
     assert values["app2"] == 20.0
 
 
+def test_update_returns_recovered_on_transition_to_healthy(
+    collector: QueryMetricsCollector,
+) -> None:
+    """update() flags transitions INTO healthy so the caller can log them."""
+    collector.register("ns/test", "my_metric", "help", {})
+    row = [QueryResult(value=1.0, dynamic_labels={})]
+
+    # First-ever success is a transition into healthy.
+    assert collector.update("ns/test", row, 0.1, tick_ts=1.0) is True
+    # Steady-state success — no transition.
+    assert collector.update("ns/test", row, 0.1, tick_ts=2.0) is False
+
+    # After a failure, the next success is a recovery.
+    collector.mark_failure("ns/test", "QueryError", "boom")
+    assert collector.update("ns/test", row, 0.1, tick_ts=3.0) is True
+
+    # A discarded stale-tick result is not a transition.
+    assert collector.update("ns/test", row, 0.1, tick_ts=0.5) is False
+
+
 def test_mark_failure_keeps_stale_value(collector: QueryMetricsCollector) -> None:
     """After mark_failure(), user metric still served (stale), but ch_query_up=0."""
     collector.register("ns/test", "my_metric", "help", {})
