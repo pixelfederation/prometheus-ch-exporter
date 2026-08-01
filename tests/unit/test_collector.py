@@ -113,10 +113,37 @@ def test_expire_removes_user_metric(collector: QueryMetricsCollector) -> None:
 
 
 def test_unregister_removes_all(collector: QueryMetricsCollector) -> None:
-    """After unregister(), no metrics at all are emitted for that resource."""
+    """After unregister(), no query metrics remain — only the leader gauge."""
     collector.register("ns/test", "my_metric", "help", {})
     collector.unregister("ns/test")
-    assert list(collector.collect()) == []
+    assert {m.name for m in collector.collect()} == {"clickhouse_leader"}
+
+
+def test_standby_emits_only_leader_gauge_zero() -> None:
+    """A standby (peering-paused) replica must not export its cached query metrics
+    — only the leader gauge (=0) — so Prometheus sees no duplicate series from the
+    demoted pod, even though the cache still holds rows from when it was active."""
+    registry = CollectorRegistry()
+    collector = QueryMetricsCollector(registry=registry, is_active=lambda: False)
+    collector.register("ns/test", "my_metric", "help", {})
+    collector.update("ns/test", [QueryResult(value=42.0, dynamic_labels={})], 0.1, tick_ts=0.0)
+
+    metrics = {m.name: m for m in collector.collect()}
+    assert set(metrics) == {"clickhouse_leader"}
+    assert metrics["clickhouse_leader"].samples[0].value == 0.0
+
+
+def test_active_emits_leader_gauge_one_plus_metrics() -> None:
+    """An active replica exports the leader gauge (=1) alongside its query metrics."""
+    registry = CollectorRegistry()
+    collector = QueryMetricsCollector(registry=registry, is_active=lambda: True)
+    collector.register("ns/test", "my_metric", "help", {})
+    collector.update("ns/test", [QueryResult(value=42.0, dynamic_labels={})], 0.1, tick_ts=0.0)
+
+    metrics = {m.name: m for m in collector.collect()}
+    assert metrics["clickhouse_leader"].samples[0].value == 1.0
+    assert metrics["my_metric"].samples[0].value == 42.0
+    assert metrics["clickhouse_query_up"].samples[0].value == 1.0
 
 
 def test_inflight_and_skip_counters(collector: QueryMetricsCollector) -> None:

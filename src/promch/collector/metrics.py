@@ -2,7 +2,7 @@ import logging
 import threading
 import time
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -118,7 +118,12 @@ class QueryMetricsCollector(Collector):
     registry: "call MY collect() method when someone scrapes /metrics".
     """
 
-    def __init__(self, registry: CollectorRegistry = REGISTRY, prefix: str = "clickhouse") -> None:
+    def __init__(
+        self,
+        registry: CollectorRegistry = REGISTRY,
+        prefix: str = "clickhouse",
+        is_active: Callable[[], bool] | None = None,
+    ) -> None:
         # `_entries` maps a resource key ("namespace/name") to its CachedMetric.
         # This is the in-memory store for all registered queries.
         self._entries: dict[str, CachedMetric] = {}
@@ -133,6 +138,11 @@ class QueryMetricsCollector(Collector):
         # Namespace for the operator's own system metrics (ch_query_* → <prefix>_query_*).
         # A trailing "_" is ignored; an empty prefix disables namespacing.
         self._prefix = prefix.rstrip("_")
+
+        # Leadership gate: return True to export metrics, False to suppress them
+        # (standby replica under kopf peering). Defaults to always-active, so a
+        # standalone operator and the unit tests behave exactly as before.
+        self._is_active = is_active if is_active is not None else (lambda: True)
 
         # Register this collector with the Prometheus registry.
         # After this call, every /metrics scrape will call our `collect()`.
@@ -381,6 +391,20 @@ class QueryMetricsCollector(Collector):
         This way we don't hold the lock during the actual metric building,
         which could be slow.
         """
+        # Leadership indicator — emitted in BOTH states (one series per pod, so no
+        # duplication) so `sum(<prefix>_leader) != 1` alerts on split-brain / no
+        # leader. Evaluate once so the gauge and the gate below agree.
+        is_leader = self._is_active()
+        yield GaugeMetricFamily(
+            self._sys_name("leader"),
+            "1 if this replica is the active peer exporting query metrics, 0 if standby",
+            value=1.0 if is_leader else 0.0,
+        )
+        # A standby (peering-paused) replica still holds the rows it cached while it
+        # was briefly active; exporting them would duplicate the active pod's series.
+        if not is_leader:
+            return
+
         # Take a snapshot of current entries. `dict(self._entries)` creates
         # a shallow copy so we can iterate safely outside the lock.
         with self._global_lock:

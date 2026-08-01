@@ -155,6 +155,7 @@ the default `clickhouse` prefix; they follow whatever `metricPrefix` you set):
 | `clickhouse_query_duration_seconds` | `query_key` | Last run duration |
 | `clickhouse_query_inflight` | `query_key` | Executions currently running |
 | `clickhouse_query_skipped_total` | `query_key` | Ticks skipped because `maxConcurrent` was reached |
+| `clickhouse_leader` | — | `1` on the active leader, `0` on standby replicas (see [High availability](#high-availability)) |
 
 ## Metric naming & reserved labels
 
@@ -209,9 +210,13 @@ values). A `ClickHouseQuery` may override `interval`, `timeout`, and
 
 Run multiple replicas for availability (not horizontal scale) using kopf
 peering for active/standby leader election. The leader runs queries and serves
-`clickhouse_*` metrics; standbys freeze and emit only `process_*` / `python_*`.
-Prometheus scrapes all pods, but only the leader emits business series — so
-there are **no duplicate metrics** by construction. The app chart ships the
+`clickhouse_*` business metrics; standbys gate them off and emit only
+`process_*` / `python_*` plus `clickhouse_leader 0`. Prometheus scrapes all
+pods, but only the leader emits business series — so there are **no duplicate
+metrics**: emission is gated on leadership, so a replica that was briefly active
+then demoted stops serving its stale cache. Every pod always exports
+`clickhouse_leader` (`1` = active leader, `0` = standby) for direct alerting.
+The app chart ships the
 `ClusterKopfPeering` object that leader election needs (kopf does not create it
 itself); without it every replica would pause at startup and none would serve
 metrics.
@@ -250,24 +255,22 @@ failover, so aggregate away from pod identity:
 sum without (pod, instance) (clickhouse_metrics)
 ```
 
-Alert when there is no active leader:
+Use `clickhouse_leader` to alert directly on leadership. Exactly one pod
+should report `1`. Scope the check to when at least one `ClickHouseQuery`
+exists — a leader with zero queries reports `0` (its query daemon never runs),
+which is harmless (no business series to duplicate):
 
 ```yaml
-- alert: PromchNoLeader
-  expr: count(clickhouse_query_up) == 0
+- alert: PromchLeaderNotSingular
+  expr: (sum(clickhouse_leader) != 1) and (count(clickhouse_query_up) > 0)
   for: 2m
 ```
 
-Alert on split-brain (more than one pod serving business metrics):
+This fires both when there is **no leader** (`sum == 0`) and on **split-brain**
+(`sum > 1`).
 
-```yaml
-- alert: PromchMultipleActive
-  expr: count(count by (pod) (clickhouse_query_up)) > 1
-  for: 5m
-```
-
-(If `metric_prefix` is customised, adjust `clickhouse_query_up` /
-`clickhouse_metrics` to the configured prefix.)
+(If `metric_prefix` is customised, adjust `clickhouse_leader` /
+`clickhouse_query_up` / `clickhouse_metrics` to the configured prefix.)
 
 ## Status
 

@@ -18,6 +18,7 @@ from typing import Any
 
 import kopf
 
+from .. import leadership
 from ..clickhouse.errors import NodeQueryError, NoLiveNodesError
 from ..collector.metrics import QueryMetricsCollector
 from ..config import OperatorConfig
@@ -79,6 +80,13 @@ async def startup(settings: kopf.OperatorSettings, **kwargs: Any) -> None:
     global _config, _collector
     _config = OperatorConfig()
     configure_peering(settings, _config)
+    # Under peering, start standby: a replica that boots straight into standby
+    # never runs a daemon (frozen watch-stream), so the default "active" would
+    # stick and it would wrongly export metrics. The query daemon flips us to
+    # active iff kopf runs it here (active peer with >=1 query). Standalone (no
+    # peering) keeps the default active — a single replica is always the leader.
+    if _config.peering_enabled:
+        leadership.mark_standby()
     logging.basicConfig(
         level=_config.log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -94,7 +102,9 @@ async def startup(settings: kopf.OperatorSettings, **kwargs: Any) -> None:
     # kopf's liveness aiohttp server logs every kube-probe GET /healthz at INFO
     # on `aiohttp.access` — one line per probe interval, pure noise.
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
-    _collector = QueryMetricsCollector(prefix=_config.metric_prefix_normalized)
+    _collector = QueryMetricsCollector(
+        prefix=_config.metric_prefix_normalized, is_active=leadership.is_active
+    )
     from prometheus_client import start_http_server
 
     start_http_server(_config.metrics_port)
@@ -154,6 +164,24 @@ async def query_scheduler(
     key = _resource_key(namespace, name)
     loop = asyncio.get_event_loop()
 
+    # kopf runs this daemon only while we are the active peer. When it stops every
+    # daemon for a higher-priority peer (OPERATOR_PAUSING), we go standby so the
+    # collector stops exporting our cached rows (see leadership module).
+    leadership.mark_active()
+    try:
+        await _run_scheduler(spec, stopped, key, loop, collector, config)
+    finally:
+        leadership.note_daemon_stopped(stopped.reason)
+
+
+async def _run_scheduler(
+    spec: kopf.Spec,
+    stopped: kopf.DaemonStopped,
+    key: str,
+    loop: asyncio.AbstractEventLoop,
+    collector: QueryMetricsCollector,
+    config: OperatorConfig,
+) -> None:
     while not stopped.is_set():
         # Re-read spec each tick so live CRD edits (interval, maxConcurrent,
         # query, queryType, connectionRef) take effect on the next cycle —
