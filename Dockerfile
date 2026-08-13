@@ -4,7 +4,7 @@
 # readability). Get the digest with:
 #   docker buildx imagetools inspect ghcr.io/astral-sh/uv:0.7.13
 # then append  @sha256:<digest>  to the reference.
-FROM ghcr.io/astral-sh/uv:0.12.1@sha256:cf4eedcaa81655197f625739489effcbe71b61ceb1506f332c3facae5deceded AS uv
+FROM ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc AS uv
 
 # ---- builder ----
 # Base image pinned by digest for reproducibility / supply-chain; Dependabot
