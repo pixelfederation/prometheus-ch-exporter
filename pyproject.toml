@@ -17,7 +17,7 @@ dependencies = [
     # "kubernetes_asyncio>=29.0",
     "clickhouse-connect>=0.7",
     "prometheus-client>=0.26.0",
-    "pydantic-settings>=2.0",
+    "pydantic-settings>=2.15.0",
 ]
 
 [project.scripts]
@@ -55,7 +55,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
     "mypy>=1.10",
-    "ruff>=0.16.1",
+    "ruff>=0.16.2",
     "pip-audit>=2.7",
     "types-setuptools",
 ]
