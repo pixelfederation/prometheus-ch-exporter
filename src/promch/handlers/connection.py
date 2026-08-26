@@ -17,6 +17,12 @@ import kopf
 
 from ..clickhouse.connection import ClickHouseConnection
 from ..clickhouse.types import ConnectionSpec, ConnectionStatus, NodeStatus
+from ..k8s_secrets import (
+    InClusterSecretReader,
+    SecretReader,
+    SecretResolutionError,
+    operator_namespace,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,23 +38,57 @@ _TOPOLOGY_INTERVAL = float(os.environ.get("PROMCH_TOPOLOGY_INTERVAL", "1800"))
 # the instance here, which spawned duplicate connections and leaked aiohttp sessions.
 _connections: dict[tuple[str, str], ClickHouseConnection] = {}
 
+# Injectable seam (tests replace with a fake). Reads a referenced Secret's
+# password from the operator's own namespace.
+_secret_reader: SecretReader = InClusterSecretReader()
 
-def _spec_to_connection_spec(spec: Mapping[str, Any]) -> ConnectionSpec:
+
+def _spec_to_connection_spec(
+    spec: Mapping[str, Any], password: str = "", username_override: str | None = None
+) -> ConnectionSpec:
     """Map a Connection CRD `spec` into the client's ConnectionSpec.
 
-    Phase A maps only what the daemon needs; other tuning fields keep their
-    ConnectionSpec defaults. Password stays empty (no Secret yet).
+    Credentials are resolved separately (from a Secret) and passed in. When the
+    auth Secret carries a username it overrides `spec.username`; otherwise
+    `spec.username` (default "default") is used. Other tuning fields keep their
+    ConnectionSpec defaults.
     """
+    if username_override is not None:
+        username = username_override
+    else:
+        username = str(spec.get("username", "default"))
     return ConnectionSpec(
         seed_hosts=list(spec["seedHosts"]),
         cluster_name=str(spec["clusterName"]),
-        port=int(spec.get("port", 8123)),
-        username=str(spec.get("username", "default")),
+        port=int(spec.get("port", 8443)),
+        username=username,
+        password=password,
+        secure=bool(spec.get("secure", True)),
+        verify=bool(spec.get("verify", True)),
         max_failovers=spec.get("maxFailovers"),
         system_query_retries=int(spec.get("systemQueryRetries", 1)),
         liveness_mode=spec.get("livenessMode", "active"),
         connect_timeout=float(spec.get("connectTimeout", 10.0)),
     )
+
+
+async def _resolve_credentials(spec: Mapping[str, Any]) -> tuple[str | None, str]:
+    """Resolve (username_override, password) from the auth Secret.
+
+    Returns (None, "") when no authSecretRef is set. When set, the passwordKey
+    must exist; the usernameKey is optional (None => fall back to spec.username).
+    """
+    ref = spec.get("authSecretRef")
+    if not ref:
+        return None, ""
+    name = str(ref["name"])
+    username_key = str(ref.get("usernameKey", "username"))
+    password_key = str(ref.get("passwordKey", "password"))
+    namespace = operator_namespace()
+    data = await _secret_reader.read_secret(namespace, name)
+    if password_key not in data:
+        raise SecretResolutionError(f"secret {namespace}/{name} has no key {password_key!r}")
+    return data.get(username_key), data[password_key]
 
 
 def _node_status_to_dict(node: NodeStatus) -> dict[str, Any]:
@@ -83,18 +123,28 @@ def _resource_key(namespace: str | None, name: str) -> tuple[str, str]:
     return (namespace or "", name)
 
 
-def _ensure_connection(
+async def _ensure_connection(
     namespace: str | None, name: str, spec: Mapping[str, Any]
 ) -> ClickHouseConnection:
     """Get-or-create the single ClickHouseConnection for this resource.
 
-    Get→create→store has no `await` between steps, so it is atomic within the
-    event loop: concurrent handlers (resume + timer) never build duplicates.
+    On a cache miss we resolve the password (a Secret read) before building the
+    spec; steady-state timers hit the cache and never touch the API server. The
+    registry is re-checked after the await so concurrent handlers (resume +
+    timer) never build duplicates.
     """
     key = _resource_key(namespace, name)
     conn = _connections.get(key)
+    if conn is not None:
+        return conn
+    try:
+        username_override, password = await _resolve_credentials(spec)
+    except SecretResolutionError as exc:
+        raise kopf.TemporaryError(f"connection {name}: {exc}", delay=30) from exc
+    cspec = _spec_to_connection_spec(spec, password, username_override)
+    conn = _connections.get(key)  # re-check after await (race guard)
     if conn is None:
-        conn = ClickHouseConnection(_spec_to_connection_spec(spec))
+        conn = ClickHouseConnection(cspec)
         _connections[key] = conn
     return conn
 
@@ -113,7 +163,7 @@ async def _discover(conn: ClickHouseConnection) -> dict[str, Any]:
 async def on_connection_present(
     spec: kopf.Spec, namespace: str | None, name: str, patch: kopf.Patch, **kwargs: Any
 ) -> None:
-    conn = _ensure_connection(namespace, name, spec)
+    conn = await _ensure_connection(namespace, name, spec)
     patch.status.update(await _discover(conn))
 
 
@@ -127,7 +177,7 @@ async def on_connection_update(
     old_seeds = old.seed_hosts if old is not None else set()
     if old is not None:
         await old.close()
-    conn = _ensure_connection(namespace, name, spec)
+    conn = await _ensure_connection(namespace, name, spec)
     logger.info("connection %s: spec updated, rebuilding", name)
     added = conn.seed_hosts - old_seeds
     removed = old_seeds - conn.seed_hosts
@@ -142,7 +192,7 @@ async def on_connection_update(
 async def on_connection_recheck(
     spec: kopf.Spec, namespace: str | None, name: str, patch: kopf.Patch, **kwargs: Any
 ) -> None:
-    conn = _ensure_connection(namespace, name, spec)
+    conn = await _ensure_connection(namespace, name, spec)
     patch.status.update(_status_to_dict(await conn.recheck()))
 
 
@@ -150,7 +200,7 @@ async def on_connection_recheck(
 async def on_connection_topology(
     spec: kopf.Spec, namespace: str | None, name: str, patch: kopf.Patch, **kwargs: Any
 ) -> None:
-    conn = _ensure_connection(namespace, name, spec)
+    conn = await _ensure_connection(namespace, name, spec)
     patch.status.update(_status_to_dict(await conn.rediscover()))
 
 

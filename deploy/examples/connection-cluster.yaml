@@ -3,9 +3,17 @@ kind: ClickHouseConnection
 metadata:
   name: cluster
 spec:
-  # Replace with one reachable node IP from your EC2 cluster.
+  # Replace with one reachable node IP from your cluster.
   seedHosts:
     - "REPLACE_WITH_REACHABLE_NODE_IP"
   clusterName: my_cluster
-  port: 8123
-  username: default
+  port: 8443            # ClickHouse HTTPS port
+  secure: true          # HTTPS
+  verify: true          # set false only for self-signed certs (dev/test)
+  username: default   # fallback; the auth Secret's username (if present) wins
+  # Credentials come from an auth Secret in the operator's namespace (see
+  # connection-cluster-secret.yaml). Omit authSecretRef for no auth.
+  authSecretRef:
+    name: ch-cluster-auth
+    # usernameKey: username   # defaults
+    # passwordKey: password

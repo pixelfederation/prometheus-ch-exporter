@@ -45,10 +45,31 @@ spec:
                   type: string
                 port:
                   type: integer
-                  default: 8123
+                  default: 8443
                 username:
                   type: string
-                  default: "default"
+                  description: "ClickHouse username. Optional; the operator falls back to 'default'. Overridden by the auth Secret's username key when authSecretRef is set. No CRD-level default, so omitting it keeps the field absent (avoids a perpetual helm diff when the chart strips it into a generated Secret)."
+                authSecretRef:
+                  type: object
+                  description: "Reference to a Secret (in the operator's namespace) holding the ClickHouse credentials. The passwordKey must exist; usernameKey is optional (falls back to spec.username). Omit for no auth."
+                  required: ["name"]
+                  properties:
+                    name:
+                      type: string
+                    usernameKey:
+                      type: string
+                      default: "username"
+                    passwordKey:
+                      type: string
+                      default: "password"
+                secure:
+                  type: boolean
+                  default: true
+                  description: "Connect over HTTPS. Pair with the ClickHouse HTTPS port (default 8443)."
+                verify:
+                  type: boolean
+                  default: true
+                  description: "Verify the server TLS certificate. Set false to accept self-signed/unverifiable certs (dev/test only)."
                 maxFailovers:
                   type: integer
                   nullable: true

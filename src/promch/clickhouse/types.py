@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Protocol, cast
+
+logger = logging.getLogger(__name__)
 
 # One raw result row: column name -> value. Unvalidated on purpose — the client
 # is "dumb" about metrics; the collector validates the `value` contract later.
@@ -44,10 +47,11 @@ class ConnectionSpec:
 
     seed_hosts: list[str]
     cluster_name: str
-    port: int = 8123
+    port: int = 8443
     username: str = "default"
     password: str = ""
-    secure: bool = False
+    secure: bool = True
+    verify: bool = True
     connect_timeout: float = 10.0
     max_failovers: int | None = None  # None = "try all live nodes"
     system_query_retries: int = 1
@@ -90,12 +94,19 @@ async def default_client_factory(host: str, spec: ConnectionSpec) -> ClientProto
     """
     import clickhouse_connect
 
+    if spec.secure and not spec.verify:
+        logger.warning(
+            "TLS certificate verification is DISABLED for %s (verify=false): "
+            "connection is vulnerable to MITM — use only for dev/test",
+            host,
+        )
     client = await clickhouse_connect.get_async_client(
         host=host,
         port=spec.port,
         username=spec.username,
         password=spec.password,
         secure=spec.secure,
+        verify=spec.verify,
         connect_timeout=int(spec.connect_timeout),
         query_retries=0,
     )
