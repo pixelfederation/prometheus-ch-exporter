@@ -25,7 +25,9 @@ async def test_reads_and_decodes_all_keys() -> None:
 
 async def test_skips_non_utf8_keys() -> None:
     async def transport(ns: str, name: str) -> tuple[int, dict]:
-        return 200, {"data": {"password": _b64("s3cret"), "blob": base64.b64encode(b"\xff\xfe").decode()}}
+        return 200, {
+            "data": {"password": _b64("s3cret"), "blob": base64.b64encode(b"\xff\xfe").decode()}
+        }
 
     reader = InClusterSecretReader(transport=transport)
     data = await reader.read_secret("ops", "ch-auth")

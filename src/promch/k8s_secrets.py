@@ -86,9 +86,7 @@ class InClusterSecretReader:
         ssl_ctx = ssl.create_default_context(cafile=_CA_PATH)
         async with (
             aiohttp.ClientSession() as session,
-            session.get(
-                url, headers={"Authorization": f"Bearer {token}"}, ssl=ssl_ctx
-            ) as resp,
+            session.get(url, headers={"Authorization": f"Bearer {token}"}, ssl=ssl_ctx) as resp,
         ):
             if resp.status != 200:
                 return resp.status, {}
