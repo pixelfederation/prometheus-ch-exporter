@@ -22,7 +22,9 @@ def test_errors_are_distinct_exceptions() -> None:
 
 def test_connection_spec_defaults() -> None:
     spec = ConnectionSpec(seed_hosts=["h1"], cluster_name="c")
-    assert spec.port == 8123
+    assert spec.port == 8443
+    assert spec.secure is True
+    assert spec.verify is True
     assert spec.max_failovers is None
     assert spec.system_query_retries == 1
     assert spec.recheck_interval == 60.0

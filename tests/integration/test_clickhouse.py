@@ -28,6 +28,9 @@ def _spec() -> ConnectionSpec:
         port=int(os.getenv("PROMCH_IT_PORT", "8123")),
         username=os.getenv("PROMCH_IT_USER", "default"),
         password=os.getenv("PROMCH_IT_PASSWORD", ""),
+        # ConnectionSpec now defaults secure=True; keep the live smoke on plain
+        # HTTP unless PROMCH_IT_SECURE=true is set explicitly.
+        secure=os.getenv("PROMCH_IT_SECURE", "false").lower() == "true",
     )
 
 

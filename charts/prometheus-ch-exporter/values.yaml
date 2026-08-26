@@ -31,15 +31,39 @@ rbac:
   create: true
 
 # Optional: ClickHouseConnection resources to create alongside the operator.
-# Cluster-scoped; `spec` is passed through to the CRD verbatim. Leave empty to
-# manage connections separately. Example:
+# Cluster-scoped; `spec` is passed through to the CRD verbatim.
+#
+# Auth: TLS is on by default (secure: true, port: 8443). Credentials live in an
+# auth Secret (username + password) in THIS namespace. In the spec, either:
+#   (a) reference an existing Secret (recommended; keeps creds out of Helm values
+#       and the Helm release object):
+#         authSecretRef: { name: ch-cluster-auth }   # keys default: username, password
+#   or (b) set a plaintext `password` (and optional `username`) in the spec — the
+#       chart moves them into a generated Secret and wires authSecretRef; the
+#       password never reaches the CRD (dev/quickstart).
+#       WARNING: a chart-generated Secret is stored in the Helm release object
+#       (retrievable via `helm get manifest/values`); reading it from Vault in
+#       helmfile avoids plaintext-in-git but NOT the Helm-release copy.
+# Example:
 #   connections:
 #     - name: cluster
 #       spec:
 #         clusterName: my_cluster
 #         seedHosts: ["10.0.0.1"]
-#         port: 8123
+#         port: 8443
+#         secure: true
+#         verify: true
 #         username: default
+#         authSecretRef: { name: ch-cluster-auth }
+#     # or chart-generated (username + password together in spec):
+#     - name: dev
+#       spec:
+#         clusterName: dev
+#         seedHosts: ["127.0.0.1"]
+#         secure: false
+#         port: 8123
+#         username: chexporter
+#         password: "devpass"   # chart creates <fullname>-dev-auth; stripped from CRD
 connections: []
 
 # User-defined ClickHouseQuery resources (data OR system). `spec` is passed

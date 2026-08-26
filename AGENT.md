@@ -143,12 +143,13 @@ come from the `ClickHouseConnection` CRD, **not** from env. `recheckInterval` /
 ## Security
 
 - Non-root container, read-only root FS, dropped caps, seccomp `RuntimeDefault`.
-- RBAC is least-privilege (the resources above; no Secrets access yet).
-- ClickHouse password auth is not wired yet (`passwordSecretRef` is future work).
+- RBAC is least-privilege (the resources above, plus `get` on Secrets scoped to
+  the operator's own namespace, for ClickHouse auth).
+- ClickHouse auth: credentials from an auth Secret via `spec.authSecretRef`
+  (username + password); TLS via `secure`/`verify`.
 
 ## Known limitations / future work
 
-- No ClickHouse password/auth (`passwordSecretRef`) yet.
 - Per-connection `recheckInterval`/`topologyInterval` are not wired to the kopf
   timers (kopf reads timer intervals at import time); they are process-wide env
   values for now.

@@ -67,8 +67,12 @@ spec:
   clusterName: my_cluster        # must match a cluster in system.clusters
   seedHosts:                     # bootstrap only; the rest is discovered
     - "10.0.0.1"
-  port: 8123
-  username: default
+  port: 8443                     # HTTPS port (secure defaults to true)
+  secure: true                   # HTTPS; set false + port 8123 for plain HTTP
+  verify: true                   # verify server cert; false = accept self-signed
+  username: default              # fallback; auth Secret's username wins if present
+  # authSecretRef:               # see "Authentication" below
+  #   name: ch-cluster-auth
   # livenessMode: active         # active (default) = ping all nodes each tick
   #                              # passive = only re-check dead nodes
   # connectTimeout: 10           # seconds
@@ -82,6 +86,59 @@ kubectl get clickhouseconnections
 # NAME      PHASE     ALIVE   TOTAL   AGE
 # cluster   Healthy   6       6       2m
 ```
+
+### Authentication
+
+TLS is on by default: `secure: true` and `port: 8443`. For plain HTTP set
+`secure: false` and `port: 8123`. For a ClickHouse with a self-signed or
+otherwise unverifiable certificate (dev/test), set `verify: false` — this
+disables certificate validation and is logged as a warning (MITM risk).
+
+Credentials are read from a Kubernetes **auth Secret in the operator's own
+namespace** (never stored in the CRD). It holds `username` + `password`;
+reference it with `authSecretRef`:
+
+```yaml
+spec:
+  username: default        # fallback if the Secret has no username key
+  authSecretRef:
+    name: ch-cluster-auth  # Secret in the operator's namespace
+    # usernameKey: username # defaults
+    # passwordKey: password
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ch-cluster-auth
+  namespace: prometheus-ch-exporter   # operator's namespace
+type: Opaque
+stringData:
+  username: "chexporter"   # optional; falls back to spec.username
+  password: "s3cret"
+```
+
+The `passwordKey` must exist in the Secret; `usernameKey` is optional (falls back
+to `spec.username`, default `default`). Omit `authSecretRef` for no auth.
+
+Via the Helm chart you have two options:
+
+- **Reference an existing Secret** (recommended, incl. Vault): put
+  `authSecretRef` in `connections[].spec`. In production create the Secret
+  out-of-band (External Secrets Operator / Vault Agent) so the credentials never
+  enter Helm values or the Helm release object.
+- **Let the chart generate it** (dev/quickstart): set `username` + `password`
+  directly in `connections[].spec`. The chart moves them into a generated Secret,
+  wires `authSecretRef`, and strips `password` from the CRD.
+  **Caveat:** a chart-generated Secret is snapshotted into the Helm release
+  object (retrievable via `helm get manifest/values`); sourcing it from Vault in
+  helmfile avoids plaintext-in-git but not the Helm-release copy.
+
+The operator reads the Secret via the Kubernetes API using its mounted
+ServiceAccount token + CA, so it needs `automountServiceAccountToken: true`
+(the default) and a namespace-scoped `secrets: get` RBAC (shipped by the chart
+when `rbac.create` is enabled).
 
 ## Define a query
 

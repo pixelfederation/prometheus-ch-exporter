@@ -1,0 +1,15 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "prometheus-ch-exporter.fullname" . }}-secrets
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "prometheus-ch-exporter.labels" . | nindent 4 }}
+rules:
+  # Read ClickHouse password Secrets referenced by ClickHouseConnection specs.
+  # Scoped to the operator's own namespace (least privilege).
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+{{- end }}

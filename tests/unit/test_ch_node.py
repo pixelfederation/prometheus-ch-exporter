@@ -2,6 +2,7 @@ from collections.abc import Mapping, Sequence
 
 import pytest
 from clickhouse_connect.driver.exceptions import (
+    DatabaseError,
     OperationalError,
     ProgrammingError,
 )
@@ -100,6 +101,30 @@ async def test_ping_success_sets_alive_and_last_checked() -> None:
     assert ok is True
     assert node.alive is True
     assert node.last_checked is not None
+
+
+async def test_connect_auth_error_marks_down_without_escaping() -> None:
+    # Authentication failure at client-creation time raises the base DatabaseError
+    # (code 516), NOT OperationalError. It must be caught and turned into a clean
+    # node-down (ping -> False), never escape as an unhandled traceback.
+    async def factory(host: str, spec: ConnectionSpec):
+        raise DatabaseError("Code: 516. Authentication failed (AUTHENTICATION_FAILED)")
+
+    node = Node("h1", _spec(), factory)
+    ok = await node.ping()
+    assert ok is False
+    assert node.alive is False
+    assert node.last_error is not None
+
+
+async def test_connect_auth_error_query_raises_connection_error() -> None:
+    async def factory(host: str, spec: ConnectionSpec):
+        raise DatabaseError("Code: 516. Authentication failed (AUTHENTICATION_FAILED)")
+
+    node = Node("h1", _spec(), factory)
+    with pytest.raises(NodeConnectionError):
+        await node.query("SELECT 1", timeout=5)
+    assert node.alive is False
 
 
 async def test_ping_failure_sets_dead() -> None:

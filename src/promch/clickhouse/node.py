@@ -51,7 +51,12 @@ class Node:
                 if self._client is None:
                     try:
                         self._client = await self._factory(self.host, self._spec)
-                    except (OperationalError, *_TRANSPORT_ERRORS) as exc:
+                    except (DatabaseError, *_TRANSPORT_ERRORS) as exc:
+                        # DatabaseError (base) covers OperationalError (host down)
+                        # AND plain DatabaseError like AUTHENTICATION_FAILED (516):
+                        # any driver error while establishing the client means we
+                        # have no usable connection, so treat it as node-down
+                        # rather than letting it escape as an ugly traceback.
                         self._mark_down(exc)
                         raise NodeConnectionError(f"{self.host}: connect failed: {exc}") from exc
         return self._client

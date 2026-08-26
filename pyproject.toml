@@ -11,10 +11,13 @@ license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
     "kopf>=1.37",
-    # kopf handles all k8s interaction (watch + status patch via its own client);
-    # we import neither kubernetes nor kubernetes_asyncio directly.
+    # kopf handles most k8s interaction (watch + status patch via its own client),
+    # but it has no public helper to read an arbitrary Secret, so k8s_secrets.py
+    # does one authenticated GET via aiohttp (already transitive via kopf; declared
+    # here because we import it directly). We still avoid a full k8s client library.
     # "kubernetes>=29.0",
     # "kubernetes_asyncio>=29.0",
+    "aiohttp>=3.9",
     "clickhouse-connect>=0.7",
     "prometheus-client>=0.26.0",
     "pydantic-settings>=2.0",

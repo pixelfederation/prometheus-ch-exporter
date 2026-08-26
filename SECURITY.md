@@ -57,14 +57,16 @@ account for when deploying:
   all Linux capabilities dropped, and seccomp `RuntimeDefault`.
 - **RBAC is least-privilege:** the operator can read/patch its own CRDs and their
   status, create/patch Events, and list/watch CRDs + namespaces (required by the
-  framework). It has **no access to Secrets**.
-- **TLS:** set `secure: true` on the `ClickHouseConnection` for ClickHouse reached
-  over untrusted networks. Certificates are verified by default.
-- **ClickHouse authentication:** password auth via a Kubernetes Secret
-  (`passwordSecretRef`) is **not yet implemented**. Until it is, deploy the
-  operator only where it can reach ClickHouse over a trusted path and the CH user
-  is appropriately restricted. When added, the password will come only from a
-  Secret — never from a CRD spec, logs, or status.
+  framework). For ClickHouse auth it also has **`get` on Secrets, scoped to its
+  own namespace only** (a namespace `Role`, not cluster-wide).
+- **TLS:** `secure: true` (the default) connects over HTTPS; certificates are
+  verified by default. `verify: false` disables verification for self-signed
+  certs (dev/test only) and is logged as a warning (MITM risk).
+- **ClickHouse authentication:** credentials come from a Kubernetes **auth Secret
+  in the operator's namespace** referenced by `spec.authSecretRef` (keys
+  `username`/`password`). The password is **never** taken from a CRD spec, logs,
+  or status. The chart can also generate this Secret from a `password` set in the
+  connection spec, stripping it from the applied CRD.
 
 ## Supply chain
 

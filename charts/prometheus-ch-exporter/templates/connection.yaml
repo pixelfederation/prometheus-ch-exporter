@@ -1,11 +1,21 @@
-{{- range .Values.connections }}
+{{- range $conn := .Values.connections }}
 ---
 apiVersion: prometheus-ch-exporter.io/v1alpha1
 kind: ClickHouseConnection
 metadata:
-  name: {{ .name }}
+  name: {{ $conn.name }}
   labels:
     {{- include "prometheus-ch-exporter.labels" $ | nindent 4 }}
 spec:
-  {{- toYaml .spec | nindent 2 }}
+  {{- $spec := deepCopy $conn.spec }}
+  {{- /* If the spec carries a plaintext `password`, the chart moves it into a
+         generated Secret and references it; the password never reaches the CRD. */}}
+  {{- if and (hasKey $spec "password") (not (hasKey $spec "authSecretRef")) }}
+  {{- $secretName := printf "%s-%s-auth" (include "prometheus-ch-exporter.fullname" $) $conn.name }}
+  {{- $_ := set $spec "authSecretRef" (dict "name" $secretName) }}
+  {{- /* credentials now live only in the generated Secret, not in the CR */}}
+  {{- $_ := unset $spec "username" }}
+  {{- end }}
+  {{- $_ := unset $spec "password" }}
+  {{- toYaml $spec | nindent 2 }}
 {{- end }}
