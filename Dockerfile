@@ -9,7 +9,7 @@ FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b98
 # ---- builder ----
 # Base image pinned by digest for reproducibility / supply-chain; Dependabot
 # bumps the digest. Tag kept in the reference for readability.
-FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS builder
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS builder
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
 # Use the base image's Python (never let uv download its own); copy-mode links so
@@ -26,7 +26,7 @@ COPY src/ src/
 RUN uv sync --frozen --no-dev --no-editable
 
 # ---- runtime ----
-FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS runtime
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS runtime
 # Debian already ships a system group named "operator" (gid 37), so create a
 # distinct group/user at uid/gid 1000 to match the chart's runAsUser/runAsGroup.
 RUN groupadd -g 1000 promch \
